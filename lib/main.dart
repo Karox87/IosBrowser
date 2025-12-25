@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:math' as math;
+import 'dart:io' show Platform;
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   runApp(const MyApp());
 }
 
@@ -29,86 +34,44 @@ class BrowserHome extends StatefulWidget {
   const BrowserHome({super.key});
 
   @override
-  _BrowserHomeState createState() => _BrowserHomeState();
+  State<BrowserHome> createState() => _BrowserHomeState();
 }
 
 class _BrowserHomeState extends State<BrowserHome> {
-  late final WebViewController _webViewController;
-  
+  InAppWebViewController? webViewController;
   final TextEditingController _urlController = TextEditingController();
+  
   bool _isLoading = false;
   double _progress = 0.0;
   String _currentUrl = 'https://www.google.com';
-  String _currentViewMode = 'Desktop'; // گۆڕدرا بۆ Desktop وەک default
+  String _currentViewMode = 'Desktop';
+  bool canGoBack = false;
+  bool canGoForward = false;
   
   List<String> _bookmarks = [];
   List<String> _history = [];
+
+  // Aim Assist State
+  bool _isMenuOpen = false;
+  bool _showAimAssist = true;
+  bool _showAppBar = true;
+  Offset _pivotPoint = const Offset(150, 500);
+  double _lineLength = 100.0;
+  double _allCircleSize = 20.0;
+  double _pathOpacity = 0.5;
+  Color _activeColor = Colors.white;
+  double _currentAngle = -0.8;
+
+  // User Agents
+  final String iphoneUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
+  final String ipadUA = "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
+  final String desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
   @override
   void initState() {
     super.initState();
     _loadData();
     _urlController.text = _currentUrl;
-    
-    _webViewController = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000))
-      // Desktop User Agent بەکار دەهێنین بۆ OAuth
-      ..setUserAgent(UserAgents.desktop)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onProgress: (int progress) {
-            setState(() {
-              _progress = progress / 100;
-            });
-          },
-          onPageStarted: (String url) {
-            setState(() {
-              _isLoading = true;
-              _currentUrl = url;
-              _urlController.text = url;
-            });
-          },
-          onPageFinished: (String url) {
-            setState(() {
-              _isLoading = false;
-              _addToHistory(url);
-            });
-          },
-          onWebResourceError: (WebResourceError error) {
-            debugPrint('Web Resource Error: ${error.description}');
-          },
-          onNavigationRequest: (NavigationRequest request) {
-            // ئەگەر لینکی Google OAuth بوو، لە بڕاوسەری دەرەکی بیکەوە
-            if (request.url.contains('accounts.google.com') && 
-                request.url.contains('oauth')) {
-              _openInExternalBrowser(request.url);
-              return NavigationDecision.prevent;
-            }
-            return NavigationDecision.navigate;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(_currentUrl));
-  }
-
-  // کردنەوەی لینک لە بڕاوسەری دەرەکی
-  Future<void> _openInExternalBrowser(String url) async {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication, // بە بڕاوسەری سیستەم بیکەوە
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('لۆگین لە بڕاوسەری دەرەکی کرایەوە'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-      }
-    }
   }
 
   Future<void> _loadData() async {
@@ -137,15 +100,6 @@ class _BrowserHomeState extends State<BrowserHome> {
     }
   }
 
-  Future<void> _setupGameCenter() async {
-    const gameCenterUrl = 'https://gamecenter.apple.com';
-    if (await canLaunchUrl(Uri.parse(gameCenterUrl))) {
-      await launchUrl(Uri.parse(gameCenterUrl));
-    } else {
-      _loadUrl(gameCenterUrl);
-    }
-  }
-
   void _loadUrl(String url) {
     String finalUrl = url.trim();
     if (finalUrl.isEmpty) return;
@@ -158,7 +112,7 @@ class _BrowserHomeState extends State<BrowserHome> {
       }
     }
     
-    _webViewController.loadRequest(Uri.parse(finalUrl));
+    webViewController?.loadUrl(urlRequest: URLRequest(url: WebUri(finalUrl)));
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
@@ -174,25 +128,26 @@ class _BrowserHomeState extends State<BrowserHome> {
     }
   }
 
-  // گۆڕینی جۆری دیمەن
   Future<void> _switchViewMode(String mode) async {
     String newUserAgent;
 
     switch (mode) {
       case 'iPad':
-        newUserAgent = UserAgents.ipad;
+        newUserAgent = ipadUA;
         break;
       case 'Desktop':
-        newUserAgent = UserAgents.desktop;
+        newUserAgent = desktopUA;
         break;
       case 'iPhone':
       default:
-        newUserAgent = UserAgents.iphone;
+        newUserAgent = iphoneUA;
         break;
     }
 
-    await _webViewController.setUserAgent(newUserAgent);
-    await _webViewController.reload();
+    await webViewController?.setSettings(
+      settings: InAppWebViewSettings(userAgent: newUserAgent)
+    );
+    await webViewController?.reload();
     
     setState(() {
       _currentViewMode = mode;
@@ -205,25 +160,87 @@ class _BrowserHomeState extends State<BrowserHome> {
     }
   }
 
-  // کردنەوەی لاپەڕەی ئێستا لە بڕاوسەری دەرەکی
-  Future<void> _openCurrentInExternalBrowser() async {
-    await _openInExternalBrowser(_currentUrl);
+  Future<void> _openInExternalBrowser(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  void _showOAuthDialog(String url) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('لۆگین بە Google'),
+        content: const Text(
+          'Google لۆگین لە WebView دا ڕێگەپێنەدراوە.\n\nدەتەوێت لە بڕاوسەری دەرەکی بیکەیتەوە؟'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('نەخێر'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _openInExternalBrowser(url);
+            },
+            child: const Text('بەڵێ، بیکەوە'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  InAppWebViewSettings _getWebViewSettings() {
+    return InAppWebViewSettings(
+      javaScriptEnabled: true,
+      domStorageEnabled: true,
+      databaseEnabled: true,
+      allowsInlineMediaPlayback: true,
+      mediaPlaybackRequiresUserGesture: false,
+      javaScriptCanOpenWindowsAutomatically: true,
+      supportMultipleWindows: true,
+      cacheEnabled: true,
+      clearCache: false,
+      thirdPartyCookiesEnabled: true,
+      userAgent: _currentViewMode == 'Desktop' ? desktopUA : 
+                 _currentViewMode == 'iPad' ? ipadUA : iphoneUA,
+      applicationNameForUserAgent: "",
+      useShouldOverrideUrlLoading: true,
+      geolocationEnabled: true,
+      transparentBackground: false,
+      useHybridComposition: Platform.isAndroid,
+      mixedContentMode: Platform.isAndroid 
+          ? MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW 
+          : null,
+      limitsNavigationsToAppBoundDomains: Platform.isIOS ? false : null,
+      allowsBackForwardNavigationGestures: Platform.isIOS ? true : null,
+      suppressesIncrementalRendering: Platform.isIOS ? false : null,
+      allowsLinkPreview: Platform.isIOS ? false : null,
+      sharedCookiesEnabled: Platform.isIOS ? true : null,
+      allowingReadAccessTo: Platform.isIOS ? WebUri("https://") : null,
+      allowFileAccessFromFileURLs: true,
+      allowUniversalAccessFromFileURLs: true,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    Offset middlePoint = _pivotPoint; 
+    double gap = _allCircleSize * 2.1;
+    Offset pivotPoint = middlePoint + Offset.fromDirection(_currentAngle + math.pi, gap);
+    Offset endPoint = middlePoint + Offset.fromDirection(_currentAngle, _lineLength);
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('بڕاوسەری یەکگرتوو'),
+      backgroundColor: Colors.black,
+      appBar: _showAppBar ? AppBar(
+        backgroundColor: Colors.black87,
+        title: const Text('بڕاوسەری یەکگرتوو', style: TextStyle(color: Colors.white)),
         elevation: 1,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.gamepad),
-            onPressed: _setupGameCenter,
-            tooltip: 'گەیم سێنتەر',
-          ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
+            icon: const Icon(Icons.more_vert, color: Colors.white),
             itemBuilder: (context) => [
               const PopupMenuItem(
                 value: 'bookmarks',
@@ -242,7 +259,6 @@ class _BrowserHomeState extends State<BrowserHome> {
                 ]),
               ),
               const PopupMenuDivider(),
-              // جۆری دیمەن
               PopupMenuItem(
                 enabled: false,
                 child: Text(
@@ -325,7 +341,7 @@ class _BrowserHomeState extends State<BrowserHome> {
               } else if (value == 'history') {
                 _showHistory();
               } else if (value == 'refresh') {
-                _webViewController.reload();
+                webViewController?.reload();
               } else if (value == 'viewmode_iphone') {
                 _switchViewMode('iPhone');
               } else if (value == 'viewmode_ipad') {
@@ -333,85 +349,392 @@ class _BrowserHomeState extends State<BrowserHome> {
               } else if (value == 'viewmode_desktop') {
                 _switchViewMode('Desktop');
               } else if (value == 'open_external') {
-                _openCurrentInExternalBrowser();
+                _openInExternalBrowser(_currentUrl);
               }
             },
           ),
         ],
-      ),
-      
-      body: Column(
-        children: [
-          if (_isLoading)
-            LinearProgressIndicator(value: _progress, minHeight: 3),
-            
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.home),
-                  onPressed: () => _loadUrl('https://www.google.com'),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(60),
+          child: Column(
+            children: [
+              if (_progress < 1.0 && _isLoading)
+                LinearProgressIndicator(
+                  value: _progress,
+                  backgroundColor: Colors.grey[800],
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.arrow_back_ios, size: 18),
-                  onPressed: () async {
-                    if (await _webViewController.canGoBack()) {
-                      _webViewController.goBack();
-                    }
-                  },
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: _urlController,
-                    textInputAction: TextInputAction.go,
-                    decoration: InputDecoration(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 15),
-                      hintText: 'گەڕان یان ناونیشان...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      filled: true,
-                      fillColor: Colors.grey[200],
-                      prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                      suffixIcon: _isLoading 
-                        ? const SizedBox(
-                            width: 15,
-                            height: 15,
-                            child: Padding(
-                              padding: EdgeInsets.all(10),
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : IconButton(
-                            icon: const Icon(Icons.clear, size: 18),
-                            onPressed: () => _urlController.clear(),
-                          ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.home, color: Colors.white, size: 20),
+                      onPressed: () => _loadUrl('https://www.google.com'),
                     ),
-                    onSubmitted: (value) => _loadUrl(value),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back_ios, size: 18, color: Colors.white),
+                      onPressed: canGoBack ? () => webViewController?.goBack() : null,
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _urlController,
+                        textInputAction: TextInputAction.go,
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                        decoration: InputDecoration(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 15),
+                          hintText: 'گەڕان یان ناونیشان...',
+                          hintStyle: TextStyle(color: Colors.grey[400]),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          filled: true,
+                          fillColor: Colors.grey[900],
+                          prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                          suffixIcon: _isLoading 
+                            ? const SizedBox(
+                                width: 15,
+                                height: 15,
+                                child: Padding(
+                                  padding: EdgeInsets.all(10),
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              )
+                            : IconButton(
+                                icon: const Icon(Icons.clear, size: 18, color: Colors.grey),
+                                onPressed: () => _urlController.clear(),
+                              ),
+                        ),
+                        onSubmitted: (value) => _loadUrl(value),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_forward_ios, size: 18, color: Colors.white),
+                      onPressed: canGoForward ? () => webViewController?.goForward() : null,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.bookmark_border, color: Colors.white),
+                      onPressed: _addBookmark,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ) : null,
+      body: Stack(
+        children: [
+          // BROWSER LAYER
+          InAppWebView(
+            initialUrlRequest: URLRequest(url: WebUri(_currentUrl)),
+            initialSettings: _getWebViewSettings(),
+            onWebViewCreated: (controller) async {
+              webViewController = controller;
+              
+              await controller.evaluateJavascript(source: """
+                (function() {
+                  delete window._flutter_inappwebview;
+                  delete window.flutter_inappwebview;
+                  delete window.flutter;
+                  
+                  Object.defineProperty(navigator, 'webdriver', {
+                    get: () => false
+                  });
+                  
+                  window.chrome = {
+                    runtime: {},
+                    loadTimes: function() {},
+                    csi: function() {},
+                    app: {}
+                  };
+                })();
+              """);
+            },
+            onLoadStart: (controller, url) {
+              setState(() {
+                _isLoading = true;
+                _currentUrl = url.toString();
+                _urlController.text = _currentUrl;
+              });
+            },
+            onLoadStop: (controller, url) async {
+              setState(() {
+                _isLoading = false;
+                _currentUrl = url.toString();
+                _urlController.text = _currentUrl;
+              });
+              
+              _addToHistory(_currentUrl);
+              canGoBack = await controller.canGoBack();
+              canGoForward = await controller.canGoForward();
+              setState(() {});
+            },
+            onProgressChanged: (controller, progress) {
+              setState(() {
+                _progress = progress / 100;
+              });
+            },
+            onCreateWindow: (controller, createWindowAction) async {
+              try {
+                if (!mounted) return false;
+                
+                final requestUrl = createWindowAction.request.url?.toString() ?? '';
+                
+                if (Platform.isIOS && (requestUrl.contains('accounts.google.com') || 
+                    requestUrl.contains('oauth'))) {
+                  _showOAuthDialog(requestUrl);
+                  return true;
+                }
+                
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) {
+                    return Dialog(
+                      backgroundColor: Colors.black,
+                      insetPadding: const EdgeInsets.all(10),
+                      child: SizedBox(
+                        width: MediaQuery.of(context).size.width * 0.95,
+                        height: MediaQuery.of(context).size.height * 0.85,
+                        child: Column(
+                          children: [
+                            Container(
+                              color: Colors.black87,
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.close, color: Colors.white),
+                                    onPressed: () {
+                                      if (context.mounted) Navigator.pop(context);
+                                    },
+                                  ),
+                                  const Expanded(
+                                    child: Text(
+                                      "پەنجەرەی نوێ",
+                                      style: TextStyle(color: Colors.white, fontSize: 16),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 48),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              child: InAppWebView(
+                                windowId: createWindowAction.windowId,
+                                initialSettings: _getWebViewSettings(),
+                                onCloseWindow: (controller) {
+                                  if (context.mounted) Navigator.pop(context);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+                return true;
+              } catch (e) {
+                debugPrint("Error opening popup: $e");
+                return false;
+              }
+            },
+            shouldOverrideUrlLoading: (controller, navigationAction) async {
+              final uri = navigationAction.request.url;
+              if (uri == null) return NavigationActionPolicy.ALLOW;
+              
+              final urlString = uri.toString();
+              
+              if (Platform.isIOS && 
+                  navigationAction.navigationType == NavigationType.LINK_ACTIVATED &&
+                  (urlString.contains('accounts.google.com/signin') ||
+                   urlString.contains('accounts.google.com/o/oauth2'))) {
+                _showOAuthDialog(urlString);
+                return NavigationActionPolicy.CANCEL;
+              }
+              
+              return NavigationActionPolicy.ALLOW;
+            },
+            onPermissionRequest: (controller, request) async {
+              return PermissionResponse(
+                resources: request.resources,
+                action: PermissionResponseAction.GRANT,
+              );
+            },
+          ),
+
+          // AIM ASSIST LAYER
+          if (_showAimAssist) ...[
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: ProAimPainter(
+                    pivot: pivotPoint, 
+                    middle: middlePoint,
+                    end: endPoint,
+                    radius: _allCircleSize,
+                    pathWidth: _allCircleSize * 1.9,
+                    opacity: _pathOpacity,
+                    color: _activeColor,
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.arrow_forward_ios, size: 18),
-                  onPressed: () async {
-                    if (await _webViewController.canGoForward()) {
-                      _webViewController.goForward();
-                    }
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.bookmark_border),
-                  onPressed: _addBookmark,
-                ),
-              ],
+              ),
+            ),
+
+            _buildHandle(middlePoint, _allCircleSize, (delta) {
+              setState(() => _pivotPoint += delta);
+            }),
+
+            _buildHandle(pivotPoint, _allCircleSize, (delta) {
+              setState(() => _pivotPoint += delta);
+            }),
+
+            _buildHandle(endPoint, _allCircleSize, (delta) {
+              setState(() {
+                Offset newEnd = endPoint + delta;
+                _lineLength = (newEnd - middlePoint).distance;
+                
+                _currentAngle = math.atan2(
+                  newEnd.dy - middlePoint.dy, 
+                  newEnd.dx - middlePoint.dx
+                );
+
+                if (_lineLength < gap + 20) _lineLength = gap + 20;
+              });
+            }),
+          ],
+
+          // SETTINGS BUTTON
+          Positioned(
+            right: 10, 
+            top: _showAppBar ? 10 : MediaQuery.of(context).padding.top + 10,
+            child: FloatingActionButton.small(
+              backgroundColor: _activeColor.withOpacity(0.5),
+              child: const Icon(Icons.tune, color: Colors.white, size: 18),
+              onPressed: () => setState(() => _isMenuOpen = !_isMenuOpen),
             ),
           ),
-          
-          Expanded(
-            child: WebViewWidget(controller: _webViewController),
-          ),
+
+          if (_isMenuOpen) _buildSettings(),
         ],
       ),
+    );
+  }
+
+  Widget _buildHandle(Offset pos, double r, Function(Offset) onMove) {
+    return Positioned(
+      left: pos.dx - (r + 15),
+      top: pos.dy - (r + 15),
+      child: GestureDetector(
+        onPanUpdate: (details) => onMove(details.delta),
+        child: Container(
+          width: (r + 15) * 2,
+          height: (r + 15) * 2,
+          color: Colors.transparent,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettings() {
+    return Center(
+      child: Container(
+        width: 300,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _activeColor, width: 2),
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "ڕێکخستنەکان",
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const Divider(color: Colors.white24),
+              
+              SwitchListTile(
+                title: const Text("پیشاندانی Aim Assist", style: TextStyle(fontSize: 13, color: Colors.white)),
+                value: _showAimAssist,
+                activeThumbColor: _activeColor,
+                onChanged: (val) => setState(() => _showAimAssist = val),
+              ),
+              
+              SwitchListTile(
+                title: const Text("پیشاندانی Navigation Bar", style: TextStyle(fontSize: 13, color: Colors.white)),
+                value: _showAppBar,
+                activeThumbColor: _activeColor,
+                onChanged: (val) => setState(() => _showAppBar = val),
+              ),
+              
+              if (_showAimAssist) ...[
+                _slider("قەبارەی گشتی", _allCircleSize / 100, (v) => setState(() => _allCircleSize = v * 100), 0.05, 1.0),
+                _slider("ڕوونی ڕێڕەو", _pathOpacity, (v) => setState(() => _pathOpacity = v), 0.1, 1.0),
+                const SizedBox(height: 10),
+                const Text("ڕەنگ:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                const SizedBox(height: 5),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Colors.white,
+                    Colors.red,
+                    Colors.green,
+                    Colors.cyan,
+                    Colors.yellow,
+                    Colors.purple,
+                  ].map((c) => GestureDetector(
+                    onTap: () => setState(() => _activeColor = c),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: c,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white,
+                          width: _activeColor == c ? 2.5 : 0,
+                        ),
+                      ),
+                    ),
+                  )).toList(),
+                ),
+              ],
+              
+              const SizedBox(height: 15),
+              ElevatedButton(
+                onPressed: () => setState(() => _isMenuOpen = false),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _activeColor,
+                  foregroundColor: Colors.black,
+                ),
+                child: const Text("داخستن", style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _slider(String label, double val, Function(double) onChanged, double min, double max) {
+    return Column(
+      children: [
+        Text(label, style: const TextStyle(fontSize: 11, color: Colors.white70)),
+        Slider(
+          value: val,
+          min: min,
+          max: max,
+          activeColor: _activeColor,
+          onChanged: onChanged,
+        ),
+      ],
     );
   }
 
@@ -513,16 +836,69 @@ class _BrowserHomeState extends State<BrowserHome> {
       ),
     );
   }
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    super.dispose();
+  }
 }
 
-class UserAgents {
-  static const String iphone = 
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
+class ProAimPainter extends CustomPainter {
+  final Offset pivot, middle, end;
+  final double radius, pathWidth, opacity;
+  final Color color;
 
-  static const String ipad = 
-      "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
+  ProAimPainter({
+    required this.pivot,
+    required this.middle,
+    required this.end,
+    required this.radius,
+    required this.pathWidth,
+    required this.opacity,
+    required this.color,
+  });
 
-  // Desktop User Agent بۆ OAuth
-  static const String desktop = 
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  @override
+  void paint(Canvas canvas, Size size) {
+    double angle = math.atan2(end.dy - pivot.dy, end.dx - pivot.dx);
+    double dist = (end - pivot).distance;
+
+    final pathPaint = Paint()
+      ..color = Colors.white.withOpacity(opacity)
+      ..style = PaintingStyle.fill;
+    
+    canvas.save();
+    canvas.translate(pivot.dx, pivot.dy);
+    canvas.rotate(angle);
+    canvas.drawRRect(
+      RRect.fromLTRBR(0, -pathWidth / 2, dist, pathWidth / 2, Radius.circular(radius)),
+      pathPaint,
+    );
+
+    final innerLinePaint = Paint()
+      ..color = Colors.red
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(const Offset(0, 0), Offset(dist, 0), innerLinePaint);
+    canvas.restore();
+
+    _drawCircle(canvas, pivot, radius);
+    _drawCircle(canvas, middle, radius);
+    _drawCircle(canvas, end, radius);
+  }
+
+  void _drawCircle(Canvas canvas, Offset center, double r) {
+    final p = Paint()
+      ..color = color
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+    
+    canvas.drawCircle(center, r, p);
+    canvas.drawCircle(center, 1, p..style = PaintingStyle.fill);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter old) => true;
 }
