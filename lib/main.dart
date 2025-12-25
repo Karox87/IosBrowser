@@ -39,7 +39,7 @@ class _BrowserHomeState extends State<BrowserHome> {
   bool _isLoading = false;
   double _progress = 0.0;
   String _currentUrl = 'https://www.google.com';
-  String _currentViewMode = 'iPhone'; // جۆری دیمەنی ئێستا
+  String _currentViewMode = 'Desktop'; // گۆڕدرا بۆ Desktop وەک default
   
   List<String> _bookmarks = [];
   List<String> _history = [];
@@ -53,7 +53,8 @@ class _BrowserHomeState extends State<BrowserHome> {
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0x00000000))
-      ..setUserAgent(UserAgents.iphone)
+      // Desktop User Agent بەکار دەهێنین بۆ OAuth
+      ..setUserAgent(UserAgents.desktop)
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {
@@ -78,11 +79,36 @@ class _BrowserHomeState extends State<BrowserHome> {
             debugPrint('Web Resource Error: ${error.description}');
           },
           onNavigationRequest: (NavigationRequest request) {
+            // ئەگەر لینکی Google OAuth بوو، لە بڕاوسەری دەرەکی بیکەوە
+            if (request.url.contains('accounts.google.com') && 
+                request.url.contains('oauth')) {
+              _openInExternalBrowser(request.url);
+              return NavigationDecision.prevent;
+            }
             return NavigationDecision.navigate;
           },
         ),
       )
       ..loadRequest(Uri.parse(_currentUrl));
+  }
+
+  // کردنەوەی لینک لە بڕاوسەری دەرەکی
+  Future<void> _openInExternalBrowser(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication, // بە بڕاوسەری سیستەم بیکەوە
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('لۆگین لە بڕاوسەری دەرەکی کرایەوە'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _loadData() async {
@@ -156,8 +182,8 @@ class _BrowserHomeState extends State<BrowserHome> {
       case 'iPad':
         newUserAgent = UserAgents.ipad;
         break;
-      case 'Mac':
-        newUserAgent = UserAgents.mac;
+      case 'Desktop':
+        newUserAgent = UserAgents.desktop;
         break;
       case 'iPhone':
       default:
@@ -177,6 +203,11 @@ class _BrowserHomeState extends State<BrowserHome> {
         SnackBar(content: Text('جۆری دیمەن گۆڕدرا بۆ $mode')),
       );
     }
+  }
+
+  // کردنەوەی لاپەڕەی ئێستا لە بڕاوسەری دەرەکی
+  Future<void> _openCurrentInExternalBrowser() async {
+    await _openInExternalBrowser(_currentUrl);
   }
 
   @override
@@ -255,15 +286,15 @@ class _BrowserHomeState extends State<BrowserHome> {
                 ]),
               ),
               PopupMenuItem(
-                value: 'viewmode_mac',
+                value: 'viewmode_desktop',
                 child: Row(children: [
                   Icon(
-                    Icons.laptop_mac,
-                    color: _currentViewMode == 'Mac' ? Colors.blue : Colors.grey,
+                    Icons.computer,
+                    color: _currentViewMode == 'Desktop' ? Colors.blue : Colors.grey,
                   ),
                   const SizedBox(width: 8),
-                  Text('Mac'),
-                  if (_currentViewMode == 'Mac')
+                  Text('Desktop'),
+                  if (_currentViewMode == 'Desktop')
                     const Padding(
                       padding: EdgeInsets.only(left: 8),
                       child: Icon(Icons.check, color: Colors.blue, size: 18),
@@ -271,6 +302,14 @@ class _BrowserHomeState extends State<BrowserHome> {
                 ]),
               ),
               const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'open_external',
+                child: Row(children: [
+                  Icon(Icons.open_in_browser, color: Colors.orange),
+                  SizedBox(width: 8),
+                  Text('کردنەوە لە بڕاوسەری دەرەکی')
+                ]),
+              ),
               const PopupMenuItem(
                 value: 'refresh',
                 child: Row(children: [
@@ -291,8 +330,10 @@ class _BrowserHomeState extends State<BrowserHome> {
                 _switchViewMode('iPhone');
               } else if (value == 'viewmode_ipad') {
                 _switchViewMode('iPad');
-              } else if (value == 'viewmode_mac') {
-                _switchViewMode('Mac');
+              } else if (value == 'viewmode_desktop') {
+                _switchViewMode('Desktop');
+              } else if (value == 'open_external') {
+                _openCurrentInExternalBrowser();
               }
             },
           ),
@@ -481,6 +522,7 @@ class UserAgents {
   static const String ipad = 
       "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
 
-  static const String mac = 
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15";
+  // Desktop User Agent بۆ OAuth
+  static const String desktop = 
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 }
