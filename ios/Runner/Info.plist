@@ -46,7 +46,6 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	
-	<!-- ڕێکخستنەکانی نوێ بۆ وێبڤیو و ئەکسی ئینتەرنێت -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -60,7 +59,6 @@
 	<key>io.flutter.embedded_views_preview</key>
 	<true/>
 	
-	<!-- بۆ کارکردنی Game Center -->
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>gamecenter</string>
