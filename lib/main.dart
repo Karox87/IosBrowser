@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'dart:math' as math;
 import 'dart:io' show Platform;
 
@@ -62,16 +63,34 @@ class _BrowserHomeState extends State<BrowserHome> {
   Color _activeColor = Colors.white;
   double _currentAngle = -0.8;
 
+  // Store popup controllers
+  final Map<int, InAppWebViewController> _popupControllers = {};
+
   // User Agents
-  final String iphoneUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
-  final String ipadUA = "Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
-  final String desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  final String iphoneUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1";
+  final String ipadUA = "Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1";
+  final String desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
   @override
   void initState() {
     super.initState();
     _loadData();
     _urlController.text = _currentUrl;
+    _requestPermissions();
+  }
+
+  // Request all necessary permissions
+  Future<void> _requestPermissions() async {
+    try {
+      await [
+        Permission.camera,
+        Permission.microphone,
+        Permission.location,
+        Permission.storage,
+      ].request();
+    } catch (e) {
+      debugPrint('Error requesting permissions: $e');
+    }
   }
 
   Future<void> _loadData() async {
@@ -100,21 +119,39 @@ class _BrowserHomeState extends State<BrowserHome> {
     }
   }
 
-  void _loadUrl(String url) {
-    String finalUrl = url.trim();
-    if (finalUrl.isEmpty) return;
-    
-    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
-      if (finalUrl.contains('.') && !finalUrl.contains(' ')) {
-        finalUrl = 'https://$finalUrl';
-      } else {
-        finalUrl = 'https://www.google.com/search?q=${Uri.encodeComponent(finalUrl)}';
-      }
+void _loadUrl(String url) {
+  String finalUrl = url.trim();
+  if (finalUrl.isEmpty) return;
+  
+  if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
+    if (finalUrl.contains('.') && !finalUrl.contains(' ')) {
+      finalUrl = 'https://$finalUrl';
+    } else {
+      finalUrl = 'https://www.google.com/search?q=${Uri.encodeComponent(finalUrl)}';
     }
-    
-    webViewController?.loadUrl(urlRequest: URLRequest(url: WebUri(finalUrl)));
-    FocusManager.instance.primaryFocus?.unfocus();
   }
+  
+  // زیادکردنی Headers بۆ خۆڕاگرتن لە وەک براوسەری ڕاستەقینە
+  webViewController?.loadUrl(
+    urlRequest: URLRequest(
+      url: WebUri(finalUrl),
+      headers: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Cache-Control': 'max-age=0',
+      },
+    ),
+  );
+  
+  FocusManager.instance.primaryFocus?.unfocus();
+}
 
   void _addBookmark() {
     if (!_bookmarks.contains(_currentUrl)) {
@@ -167,62 +204,95 @@ class _BrowserHomeState extends State<BrowserHome> {
     }
   }
 
-  void _showOAuthDialog(String url) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('لۆگین بە Google'),
-        content: const Text(
-          'Google لۆگین لە WebView دا ڕێگەپێنەدراوە.\n\nدەتەوێت لە بڕاوسەری دەرەکی بیکەیتەوە؟'
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('نەخێر'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _openInExternalBrowser(url);
-            },
-            child: const Text('بەڵێ، بیکەوە'),
-          ),
-        ],
-      ),
-    );
+InAppWebViewSettings _getWebViewSettings() {
+  // بەپێی _currentViewMode UA دیاری بکە
+  String selectedUA;
+  UserPreferredContentMode contentMode;
+  
+  switch (_currentViewMode) {
+    case 'iPhone':
+      selectedUA = iphoneUA;
+      contentMode = UserPreferredContentMode.MOBILE;
+      break;
+    case 'iPad':
+      selectedUA = ipadUA;
+      contentMode = UserPreferredContentMode.MOBILE;
+      break;
+    case 'Desktop':
+    default:
+      selectedUA = desktopUA;
+      contentMode = UserPreferredContentMode.DESKTOP;
+      break;
   }
-
-  InAppWebViewSettings _getWebViewSettings() {
-    return InAppWebViewSettings(
-      javaScriptEnabled: true,
-      domStorageEnabled: true,
-      databaseEnabled: true,
-      allowsInlineMediaPlayback: true,
-      mediaPlaybackRequiresUserGesture: false,
-      javaScriptCanOpenWindowsAutomatically: true,
-      supportMultipleWindows: true,
-      cacheEnabled: true,
-      clearCache: false,
-      thirdPartyCookiesEnabled: true,
-      userAgent: _currentViewMode == 'Desktop' ? desktopUA : 
-                 _currentViewMode == 'iPad' ? ipadUA : iphoneUA,
-      applicationNameForUserAgent: "",
-      useShouldOverrideUrlLoading: true,
-      geolocationEnabled: true,
-      transparentBackground: false,
-      useHybridComposition: Platform.isAndroid,
-      mixedContentMode: Platform.isAndroid 
-          ? MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW 
-          : null,
-      limitsNavigationsToAppBoundDomains: Platform.isIOS ? false : null,
-      allowsBackForwardNavigationGestures: Platform.isIOS ? true : null,
-      suppressesIncrementalRendering: Platform.isIOS ? false : null,
-      allowsLinkPreview: Platform.isIOS ? false : null,
-      sharedCookiesEnabled: Platform.isIOS ? true : null,
-      allowingReadAccessTo: Platform.isIOS ? WebUri("https://") : null,
-      allowFileAccessFromFileURLs: true,
-      allowUniversalAccessFromFileURLs: true,
-    );
+  
+  return InAppWebViewSettings(
+    javaScriptEnabled: true,
+    domStorageEnabled: true,
+    databaseEnabled: true,
+    allowsInlineMediaPlayback: true,
+    mediaPlaybackRequiresUserGesture: false,
+    javaScriptCanOpenWindowsAutomatically: true,
+    supportMultipleWindows: true,
+    cacheEnabled: true,
+    clearCache: false,
+    thirdPartyCookiesEnabled: true,
+    sharedCookiesEnabled: Platform.isIOS,
+    
+    userAgent: selectedUA,
+    applicationNameForUserAgent: "",
+    
+    useShouldOverrideUrlLoading: false,
+    geolocationEnabled: true,
+    transparentBackground: false,
+    useHybridComposition: Platform.isAndroid,
+    mixedContentMode: Platform.isAndroid ? MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW : null,
+    builtInZoomControls: false,
+    displayZoomControls: false,
+    limitsNavigationsToAppBoundDomains: false,
+    allowsBackForwardNavigationGestures: Platform.isIOS,
+    suppressesIncrementalRendering: false,
+    allowsLinkPreview: false,
+    allowingReadAccessTo: Platform.isIOS ? WebUri("https://") : null,
+    allowFileAccessFromFileURLs: true,
+    allowUniversalAccessFromFileURLs: true,
+    verticalScrollBarEnabled: true,
+    horizontalScrollBarEnabled: true,
+    disableContextMenu: false,
+    useWideViewPort: true,
+    loadWithOverviewMode: true,
+    allowContentAccess: true,
+    allowFileAccess: true,
+    incognito: false,
+    preferredContentMode: contentMode,
+  );
+}
+  String _getPopupBridgeScript() {
+    return """
+      (function() {
+        const originalOpen = window.open;
+        window.open = function(url, name, features) {
+          console.log('Opening popup:', url);
+          return originalOpen.call(this, url, name, features);
+        };
+        
+        window.addEventListener('message', function(event) {
+          console.log('Received message:', event.data);
+        }, false);
+        
+        if (window.opener && !window.opener.closed) {
+          window.addEventListener('load', function() {
+            try {
+              window.opener.postMessage({
+                type: 'popup-ready',
+                url: window.location.href
+              }, '*');
+            } catch(e) {
+              console.log('Could not notify opener:', e);
+            }
+          });
+        }
+      })();
+    """;
   }
 
   @override
@@ -439,7 +509,8 @@ class _BrowserHomeState extends State<BrowserHome> {
                   delete window.flutter;
                   
                   Object.defineProperty(navigator, 'webdriver', {
-                    get: () => false
+                    get: () => false,
+                    configurable: true
                   });
                   
                   window.chrome = {
@@ -448,7 +519,42 @@ class _BrowserHomeState extends State<BrowserHome> {
                     csi: function() {},
                     app: {}
                   };
+                  
+                  const originalPlatform = navigator.platform;
+                  Object.defineProperty(navigator, 'platform', {
+                    get: () => originalPlatform || 'Win32',
+                    configurable: true
+                  });
+                  
+                  Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5],
+                    configurable: true
+                  });
+                  
+                  Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en', 'ku'],
+                    configurable: true
+                  });
+                  
+                  Object.defineProperty(navigator, 'maxTouchPoints', {
+                    get: () => 5,
+                    configurable: true
+                  });
+                  
+                  // Override getUserMedia to prevent camera errors
+                  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+                    navigator.mediaDevices.getUserMedia = function(constraints) {
+                      console.log('getUserMedia called with:', constraints);
+                      return originalGetUserMedia(constraints).catch(err => {
+                        console.log('getUserMedia error (suppressed):', err);
+                        return Promise.reject(err);
+                      });
+                    };
+                  }
                 })();
+                
+                ${_getPopupBridgeScript()}
               """);
             },
             onLoadStart: (controller, url) {
@@ -469,6 +575,8 @@ class _BrowserHomeState extends State<BrowserHome> {
               canGoBack = await controller.canGoBack();
               canGoForward = await controller.canGoForward();
               setState(() {});
+              
+              await controller.evaluateJavascript(source: _getPopupBridgeScript());
             },
             onProgressChanged: (controller, progress) {
               setState(() {
@@ -480,17 +588,14 @@ class _BrowserHomeState extends State<BrowserHome> {
                 if (!mounted) return false;
                 
                 final requestUrl = createWindowAction.request.url?.toString() ?? '';
+                final windowId = createWindowAction.windowId;
                 
-                if (Platform.isIOS && (requestUrl.contains('accounts.google.com') || 
-                    requestUrl.contains('oauth'))) {
-                  _showOAuthDialog(requestUrl);
-                  return true;
-                }
+                debugPrint('Creating window for: $requestUrl');
                 
                 showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (context) {
+                  builder: (dialogContext) {
                     return Dialog(
                       backgroundColor: Colors.black,
                       insetPadding: const EdgeInsets.all(10),
@@ -507,12 +612,14 @@ class _BrowserHomeState extends State<BrowserHome> {
                                   IconButton(
                                     icon: const Icon(Icons.close, color: Colors.white),
                                     onPressed: () {
-                                      if (context.mounted) Navigator.pop(context);
+                                      if (dialogContext.mounted) {
+                                        Navigator.pop(dialogContext);
+                                      }
                                     },
                                   ),
                                   const Expanded(
                                     child: Text(
-                                      "پەنجەرەی نوێ",
+                                      "پەنجەرەی لۆگین",
                                       style: TextStyle(color: Colors.white, fontSize: 16),
                                       textAlign: TextAlign.center,
                                     ),
@@ -523,10 +630,77 @@ class _BrowserHomeState extends State<BrowserHome> {
                             ),
                             Expanded(
                               child: InAppWebView(
-                                windowId: createWindowAction.windowId,
+                                windowId: windowId,
                                 initialSettings: _getWebViewSettings(),
-                                onCloseWindow: (controller) {
-                                  if (context.mounted) Navigator.pop(context);
+                                onWebViewCreated: (popupController) async {
+                                  _popupControllers[windowId] = popupController;
+                                                                  
+                                  await controller.evaluateJavascript(source: """
+  (function() {
+    // Override fetch to add headers
+    const originalFetch = window.fetch;
+    window.fetch = function(...args) {
+      if (args[1]) {
+        args[1].headers = {
+          ...args[1].headers,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+        };
+      }
+      return originalFetch.apply(this, args);
+    };
+  })();
+""");
+                                },
+                                onLoadStop: (popupController, url) async {
+                                  debugPrint('Popup loaded: ${url?.toString()}');
+                                  
+                                  if (url != null) {
+                                    final urlString = url.toString();
+                                    
+                                    // Check for successful OAuth
+                                    if (urlString.contains('code=') || 
+                                        urlString.contains('access_token=') ||
+                                        (!urlString.contains('accounts.google.com') &&
+                                         !urlString.contains('oauth') &&
+                                         !urlString.contains('login') &&
+                                         !urlString.contains('signin') &&
+                                         !urlString.contains('auth/handler') &&
+                                         !urlString.contains('firebaseapp.com'))) {
+                                      
+                                      debugPrint('OAuth completed successfully');
+                                      await Future.delayed(const Duration(milliseconds: 1000));
+                                      
+                                      if (dialogContext.mounted) {
+                                        Navigator.pop(dialogContext);
+                                      }
+                                      
+                                      await Future.delayed(const Duration(milliseconds: 300));
+                                      webViewController?.reload();
+                                      
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('لۆگین سەرکەوتوو بوو! ✓'),
+                                            backgroundColor: Colors.green,
+                                            duration: Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  }
+                                },
+                                onCloseWindow: (popupController) {
+                                  if (dialogContext.mounted) {
+                                    Navigator.pop(dialogContext);
+                                  }
+                                  _popupControllers.remove(windowId);
+                                                                },
+                                onConsoleMessage: (popupController, consoleMessage) {
+                                  // Suppress camera errors in popup
+                                  if (!consoleMessage.message.contains('camera') &&
+                                      !consoleMessage.message.contains('Camera')) {
+                                    debugPrint('Popup: ${consoleMessage.message}');
+                                  }
                                 },
                               ),
                             ),
@@ -536,6 +710,7 @@ class _BrowserHomeState extends State<BrowserHome> {
                     );
                   },
                 );
+                
                 return true;
               } catch (e) {
                 debugPrint("Error opening popup: $e");
@@ -543,26 +718,22 @@ class _BrowserHomeState extends State<BrowserHome> {
               }
             },
             shouldOverrideUrlLoading: (controller, navigationAction) async {
-              final uri = navigationAction.request.url;
-              if (uri == null) return NavigationActionPolicy.ALLOW;
-              
-              final urlString = uri.toString();
-              
-              if (Platform.isIOS && 
-                  navigationAction.navigationType == NavigationType.LINK_ACTIVATED &&
-                  (urlString.contains('accounts.google.com/signin') ||
-                   urlString.contains('accounts.google.com/o/oauth2'))) {
-                _showOAuthDialog(urlString);
-                return NavigationActionPolicy.CANCEL;
-              }
-              
               return NavigationActionPolicy.ALLOW;
             },
             onPermissionRequest: (controller, request) async {
+              // Grant all permissions except camera/microphone if not needed
               return PermissionResponse(
                 resources: request.resources,
                 action: PermissionResponseAction.GRANT,
               );
+            },
+            onConsoleMessage: (controller, consoleMessage) {
+              // Suppress camera-related errors
+              if (!consoleMessage.message.contains('camera') &&
+                  !consoleMessage.message.contains('Camera') &&
+                  !consoleMessage.message.contains('VideoCapture')) {
+                debugPrint('Console: ${consoleMessage.message}');
+              }
             },
           ),
 
@@ -674,231 +845,220 @@ class _BrowserHomeState extends State<BrowserHome> {
               ),
               
               if (_showAimAssist) ...[
-                _slider("قەبارەی گشتی", _allCircleSize / 100, (v) => setState(() => _allCircleSize = v * 100), 0.05, 1.0),
-                _slider("ڕوونی ڕێڕەو", _pathOpacity, (v) => setState(() => _pathOpacity = v), 0.1, 1.0),
-                const SizedBox(height: 10),
-                const Text("ڕەنگ:", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                const SizedBox(height: 5),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Colors.white,
-                    Colors.red,
-                    Colors.green,
-                    Colors.cyan,
-                    Colors.yellow,
-                    Colors.purple,
-                  ].map((c) => GestureDetector(
-                    onTap: () => setState(() => _activeColor = c),
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      width: 28,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        color: c,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white,
-                          width: _activeColor == c ? 2.5 : 0,
-                        ),
-                      ),
-                    ),
-                  )).toList(),
-                ),
-              ],
-              
-              const SizedBox(height: 15),
-              ElevatedButton(
-                onPressed: () => setState(() => _isMenuOpen = false),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _activeColor,
-                  foregroundColor: Colors.black,
-                ),
-                child: const Text("داخستن", style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _slider(String label, double val, Function(double) onChanged, double min, double max) {
-    return Column(
-      children: [
-        Text(label, style: const TextStyle(fontSize: 11, color: Colors.white70)),
-        Slider(
-          value: val,
-          min: min,
-          max: max,
-          activeColor: _activeColor,
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
-
-  void _showBookmarks() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('نیشانەکان'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: _bookmarks.isEmpty
-              ? const Text('هیچ نیشانەیەک نیە')
-              : ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _bookmarks.length,
-                  itemBuilder: (context, index) => ListTile(
-                    leading: const Icon(Icons.bookmark),
-                    title: Text(
-                      _bookmarks[index],
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () {
-                        setState(() {
-                          _bookmarks.removeAt(index);
-                          _saveBookmarks();
-                        });
-                        Navigator.pop(context);
-                        _showBookmarks();
-                      },
-                    ),
-                    onTap: () {
-                      _loadUrl(_bookmarks[index]);
-                      Navigator.pop(context);
-                    },
-                  ),
-                ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('داخستن'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showHistory() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('مێژووی سەردان'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: _history.isEmpty
-              ? const Text('هیچ مێژویەک نیە')
-              : ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _history.reversed.toList().length,
-                  itemBuilder: (context, index) {
-                    final reversedList = _history.reversed.toList();
-                    return ListTile(
-                      leading: const Icon(Icons.history),
-                      title: Text(
-                        reversedList[index],
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      onTap: () {
-                        _loadUrl(reversedList[index]);
-                        Navigator.pop(context);
-                      },
-                    );
-                  },
-                ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _history.clear();
-                _saveHistory();
-              });
-              Navigator.pop(context);
-            },
-            child: const Text(
-              'سڕینەوەی هەموو',
-              style: TextStyle(color: Colors.red),
+                _slider("قەبارەی گشتی", _allCircleSize / 100, (v) => setState(() => _allCircleSize= v * 100), 0.05, 1.0),
+_slider("ڕوونی ڕێڕەو", _pathOpacity, (v) => setState(() => _pathOpacity = v), 0.1, 1.0),
+const SizedBox(height: 10),
+const Text("ڕەنگ:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+const SizedBox(height: 5),
+Row(
+mainAxisAlignment: MainAxisAlignment.center,
+children: [
+Colors.white,
+Colors.red,
+Colors.green,
+Colors.cyan,
+Colors.yellow,
+Colors.purple,
+].map((c) => GestureDetector(
+onTap: () => setState(() => _activeColor = c),
+child: Container(
+margin: const EdgeInsets.symmetric(horizontal: 4),
+width: 28,
+height: 28,
+decoration: BoxDecoration(
+color: c,
+shape: BoxShape.circle,
+border: Border.all(
+color: Colors.white,
+width: _activeColor == c ? 2.5 : 0,
+),
+),
+),
+)).toList(),
+),
+],
+          const SizedBox(height: 15),
+          ElevatedButton(
+            onPressed: () => setState(() => _isMenuOpen = false),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _activeColor,
+              foregroundColor: Colors.black,
             ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('داخستن'),
+            child: const Text("داخستن", style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _urlController.dispose();
-    super.dispose();
-  }
+    ),
+  ),
+);
 }
-
+Widget _slider(String label, double val, Function(double) onChanged, double min, double max) {
+return Column(
+children: [
+Text(label, style: const TextStyle(fontSize: 11, color: Colors.white70)),
+Slider(
+value: val,
+min: min,
+max: max,
+activeColor: _activeColor,
+onChanged: onChanged,
+),
+],
+);
+}
+void _showBookmarks() {
+showDialog(
+context: context,
+builder: (context) => AlertDialog(
+title: const Text('نیشانەکان'),
+content: SizedBox(
+width: double.maxFinite,
+child: _bookmarks.isEmpty
+? const Text('هیچ نیشانەیەک نییە')
+: ListView.builder(
+shrinkWrap: true,
+itemCount: _bookmarks.length,
+itemBuilder: (context, index) => ListTile(
+leading: const Icon(Icons.bookmark),
+title: Text(
+_bookmarks[index],
+maxLines: 1,
+overflow: TextOverflow.ellipsis,
+),
+trailing: IconButton(
+icon: const Icon(Icons.delete, color: Colors.red),
+onPressed: () {
+setState(() {
+_bookmarks.removeAt(index);
+_saveBookmarks();
+});
+Navigator.pop(context);
+_showBookmarks();
+},
+),
+onTap: () {
+_loadUrl(_bookmarks[index]);
+Navigator.pop(context);
+},
+),
+),
+),
+actions: [
+TextButton(
+onPressed: () => Navigator.pop(context),
+child: const Text('داخستن'),
+),
+],
+),
+);
+}
+void _showHistory() {
+showDialog(
+context: context,
+builder: (context) => AlertDialog(
+title: const Text('مێژووی سەردان'),
+content: SizedBox(
+width: double.maxFinite,
+child: _history.isEmpty
+? const Text('هیچ مێژوویەک نییە')
+: ListView.builder(
+shrinkWrap: true,
+itemCount: _history.reversed.toList().length,
+itemBuilder: (context, index) {
+final reversedList = _history.reversed.toList();
+return ListTile(
+leading: const Icon(Icons.history),
+title: Text(
+reversedList[index],
+maxLines: 1,
+overflow: TextOverflow.ellipsis,
+),
+onTap: () {
+_loadUrl(reversedList[index]);
+Navigator.pop(context);
+},
+);
+},
+),
+),
+actions: [
+TextButton(
+onPressed: () {
+setState(() {
+_history.clear();
+_saveHistory();
+});
+Navigator.pop(context);
+},
+child: const Text(
+'سڕینەوەی هەموو',
+style: TextStyle(color: Colors.red),
+),
+),
+TextButton(
+onPressed: () => Navigator.pop(context),
+child: const Text('داخستن'),
+),
+],
+),
+);
+}
+@override
+void dispose() {
+_urlController.dispose();
+_popupControllers.clear();
+super.dispose();
+}
+}
 class ProAimPainter extends CustomPainter {
-  final Offset pivot, middle, end;
-  final double radius, pathWidth, opacity;
-  final Color color;
+final Offset pivot, middle, end;
+final double radius, pathWidth, opacity;
+final Color color;
+ProAimPainter({
+required this.pivot,
+required this.middle,
+required this.end,
+required this.radius,
+required this.pathWidth,
+required this.opacity,
+required this.color,
+});
+@override
+void paint(Canvas canvas, Size size) {
+double angle = math.atan2(end.dy - pivot.dy, end.dx - pivot.dx);
+double dist = (end - pivot).distance;
+final pathPaint = Paint()
+  ..color = Colors.white.withOpacity(opacity)
+  ..style = PaintingStyle.fill;
 
-  ProAimPainter({
-    required this.pivot,
-    required this.middle,
-    required this.end,
-    required this.radius,
-    required this.pathWidth,
-    required this.opacity,
-    required this.color,
-  });
+canvas.save();
+canvas.translate(pivot.dx, pivot.dy);
+canvas.rotate(angle);
+canvas.drawRRect(
+  RRect.fromLTRBR(0, -pathWidth / 2, dist, pathWidth / 2, Radius.circular(radius)),
+  pathPaint,
+);
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    double angle = math.atan2(end.dy - pivot.dy, end.dx - pivot.dx);
-    double dist = (end - pivot).distance;
+final innerLinePaint = Paint()
+  ..color = Colors.red
+  ..strokeWidth = 2.0
+  ..strokeCap = StrokeCap.round;
 
-    final pathPaint = Paint()
-      ..color = Colors.white.withOpacity(opacity)
-      ..style = PaintingStyle.fill;
-    
-    canvas.save();
-    canvas.translate(pivot.dx, pivot.dy);
-    canvas.rotate(angle);
-    canvas.drawRRect(
-      RRect.fromLTRBR(0, -pathWidth / 2, dist, pathWidth / 2, Radius.circular(radius)),
-      pathPaint,
-    );
+canvas.drawLine(const Offset(0, 0), Offset(dist, 0), innerLinePaint);
+canvas.restore();
 
-    final innerLinePaint = Paint()
-      ..color = Colors.red
-      ..strokeWidth = 2.0
-      ..strokeCap = StrokeCap.round;
-
-    canvas.drawLine(const Offset(0, 0), Offset(dist, 0), innerLinePaint);
-    canvas.restore();
-
-    _drawCircle(canvas, pivot, radius);
-    _drawCircle(canvas, middle, radius);
-    _drawCircle(canvas, end, radius);
-  }
-
-  void _drawCircle(Canvas canvas, Offset center, double r) {
-    final p = Paint()
-      ..color = color
-      ..strokeWidth = 2.0
-      ..style = PaintingStyle.stroke;
-    
-    canvas.drawCircle(center, r, p);
-    canvas.drawCircle(center, 1, p..style = PaintingStyle.fill);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter old) => true;
+_drawCircle(canvas, pivot, radius);
+_drawCircle(canvas, middle, radius);
+_drawCircle(canvas, end, radius);
+}
+void _drawCircle(Canvas canvas, Offset center, double r) {
+final p = Paint()
+..color = color
+..strokeWidth = 2.0
+..style = PaintingStyle.stroke;
+canvas.drawCircle(center, r, p);
+canvas.drawCircle(center, 1, p..style = PaintingStyle.fill);
+}
+@override
+bool shouldRepaint(covariant CustomPainter old) => true;
 }
