@@ -41,7 +41,7 @@ class BrowserHome extends StatefulWidget {
 class _BrowserHomeState extends State<BrowserHome> {
   InAppWebViewController? webViewController;
   final TextEditingController _urlController = TextEditingController();
-  
+  bool _isDraggingPath = false;
   bool _isLoading = false;
   double _progress = 0.0;
   String _currentUrl = 'https://www.google.com';
@@ -62,10 +62,11 @@ class _BrowserHomeState extends State<BrowserHome> {
   double _pathOpacity = 0.5;
   Color _activeColor = Colors.white;
   double _currentAngle = -0.8;
-
+  double _zoomLevel = 1.0; // زیادکردنی zoom
+double _lineThickness = 2.0; // تۆخی هێڵ
   // Store popup controllers
   final Map<int, InAppWebViewController> _popupControllers = {};
-
+  
   // User Agents
   final String iphoneUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1";
   final String ipadUA = "Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1";
@@ -263,6 +264,7 @@ InAppWebViewSettings _getWebViewSettings() {
     allowContentAccess: true,
     allowFileAccess: true,
     incognito: false,
+    textZoom: (_zoomLevel * 100).toInt(),  // زووم لێرە زیاد کرا
     preferredContentMode: contentMode,
   );
 }
@@ -294,6 +296,47 @@ InAppWebViewSettings _getWebViewSettings() {
       })();
     """;
   }
+
+  // فەنکشن بۆ دیاریکردنی چوارگۆشەی ڕێڕەوەکە
+Rect _calculatePathRect(Offset middle, Offset pivot, Offset end, double pathWidth) {
+  final pathAngle = math.atan2(end.dy - pivot.dy, end.dx - pivot.dx);
+  final pathLength = (end - pivot).distance;
+  
+  // دروستکردنی گۆڕاوی Path
+  final path = Path()
+    ..moveTo(pivot.dx, pivot.dy - pathWidth / 2)
+    ..lineTo(pivot.dx + pathLength * math.cos(pathAngle), 
+             pivot.dy + pathLength * math.sin(pathAngle) - pathWidth / 2)
+    ..lineTo(pivot.dx + pathLength * math.cos(pathAngle), 
+             pivot.dy + pathLength * math.sin(pathAngle) + pathWidth / 2)
+    ..lineTo(pivot.dx, pivot.dy + pathWidth / 2)
+    ..close();
+    
+  return path.getBounds();
+}
+
+// فەنکشن بۆ دیاریکردنی ئایا خاڵ لە ڕێڕەوەکەدایە
+bool _isPointInPath(Offset point, Offset middle, Offset pivot, Offset end, double pathWidth) {
+  final pathAngle = math.atan2(end.dy - pivot.dy, end.dx - pivot.dx);
+  final pathLength = (end - pivot).distance;
+  
+  // گۆڕینی خاڵ بۆ سیستەمی ڕاستەوخۆی ڕێڕەوەکە
+  final translatedPoint = Offset(
+    point.dx - pivot.dx,
+    point.dy - pivot.dy,
+  );
+  
+  // سووڕانەوەی خاڵ بەپێی گۆشەکە
+  final rotatedPoint = Offset(
+    translatedPoint.dx * math.cos(-pathAngle) - translatedPoint.dy * math.sin(-pathAngle),
+    translatedPoint.dx * math.sin(-pathAngle) + translatedPoint.dy * math.cos(-pathAngle),
+  );
+  
+  // چێککردن بۆ ئەوەی ئایا خاڵ لە ناوچەی ڕێڕەوەکەدایە
+  return rotatedPoint.dx >= 0 && 
+         rotatedPoint.dx <= pathLength && 
+         rotatedPoint.dy.abs() <= pathWidth / 2;
+}
 
   @override
   Widget build(BuildContext context) {
@@ -738,45 +781,130 @@ InAppWebViewSettings _getWebViewSettings() {
           ),
 
           // AIM ASSIST LAYER
-          if (_showAimAssist) ...[
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  painter: ProAimPainter(
-                    pivot: pivotPoint, 
-                    middle: middlePoint,
-                    end: endPoint,
-                    radius: _allCircleSize,
-                    pathWidth: _allCircleSize * 1.9,
-                    opacity: _pathOpacity,
-                    color: _activeColor,
-                  ),
-                ),
-              ),
+// AIM ASSIST LAYER
+if (_showAimAssist) ...[
+  Positioned.fill(
+    child: IgnorePointer(
+      child: RepaintBoundary(
+        child: CustomPaint(
+          painter: ProAimPainter(
+            pivot: pivotPoint, 
+            middle: middlePoint,
+            end: endPoint,
+            radius: _allCircleSize,
+            pathWidth: _allCircleSize * 1.9,
+            opacity: _pathOpacity,
+            color: _activeColor,
+            lineThickness: _lineThickness,
+          ),
+        ),
+      ),
+    ),
+  ),
+
+  // DRAG HANDLE لە نێوان pivot و middle
+  Positioned(
+    left: (pivotPoint.dx + middlePoint.dx) / 2 - 20,
+    top: (pivotPoint.dy + middlePoint.dy) / 2 - 20,
+ child: GestureDetector(
+  behavior: HitTestBehavior.opaque,
+  onPanStart: (_) {},
+  onPanUpdate: (details) {
+    setState(() {
+      _pivotPoint += details.delta;
+    });
+  },
+      child: Container(
+        width: 40,
+        height: 40,
+        color: Colors.transparent,
+        child: Center(
+          child: Container(
+            width: 15,
+            height: 15,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _activeColor.withOpacity(0.0),
             ),
+          ),
+        ),
+      ),
+    ),
+  ),
+  
+  // DRAG HANDLE لە نێوان middle و end
+  Positioned(
+    left: (middlePoint.dx + endPoint.dx) / 2 - 20,
+    top: (middlePoint.dy + endPoint.dy) / 2 - 20,
+    child: GestureDetector(
+  behavior: HitTestBehavior.opaque,
+  onPanStart: (_) {},
+  onPanUpdate: (details) {
+    setState(() {
+      _pivotPoint += details.delta;
+    });
+  },
+      child: Container(
+        width: 40,
+        height: 40,
+        color: const Color.fromARGB(0, 0, 0, 0),
+        child: Center(
+          child: Container(
+            width: 15,
+            height: 15,
+            
+            decoration: BoxDecoration(
+              
+              shape: BoxShape.circle,
+              color: _activeColor.withOpacity(0.1),
+            ),
+          ),
+        ),
+      ),
+    ),
+  ),
+  
+  // END POINT HANDLE
+  // END POINT HANDLE - ناوچەی گرتنی جیا و گەورەتر
+  Positioned(
+    left: endPoint.dx - 30, // قەبارەی جیاکراوی 60x60
+    top: endPoint.dy - 30,
+   child: GestureDetector(
+  behavior: HitTestBehavior.opaque,
+  onPanStart: (_) {},
+  onPanUpdate: (details) {
+    setState(() {
+      Offset newEnd = endPoint + details.delta;
+          _lineLength = (newEnd - middlePoint).distance;
+          
+          _currentAngle = math.atan2(
+            newEnd.dy - middlePoint.dy, 
+            newEnd.dx - middlePoint.dx
+          );
 
-            _buildHandle(middlePoint, _allCircleSize, (delta) {
-              setState(() => _pivotPoint += delta);
-            }),
-
-            _buildHandle(pivotPoint, _allCircleSize, (delta) {
-              setState(() => _pivotPoint += delta);
-            }),
-
-            _buildHandle(endPoint, _allCircleSize, (delta) {
-              setState(() {
-                Offset newEnd = endPoint + delta;
-                _lineLength = (newEnd - middlePoint).distance;
-                
-                _currentAngle = math.atan2(
-                  newEnd.dy - middlePoint.dy, 
-                  newEnd.dx - middlePoint.dx
-                );
-
-                if (_lineLength < gap + 20) _lineLength = gap + 20;
-              });
-            }),
-          ],
+          double gap = _allCircleSize * 2.1;
+          if (_lineLength < gap + 20) _lineLength = gap + 20;
+        });
+      },
+      child: Container(
+        width: 60, // قەبارەی جیا کە ناگۆڕێت
+        height: 60,
+        color: const Color.fromARGB(0, 0, 0, 0),
+        child: Center(
+          child: Container(
+            width: _allCircleSize * 1.5,
+            height: _allCircleSize * 1.5,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _activeColor.withOpacity(0.0),
+              border: Border.all(color: _activeColor, width: 2),
+            ),
+          ),
+        ),
+      ),
+    ),
+  ),
+],
 
           // SETTINGS BUTTON
           Positioned(
@@ -795,103 +923,145 @@ InAppWebViewSettings _getWebViewSettings() {
     );
   }
 
-  Widget _buildHandle(Offset pos, double r, Function(Offset) onMove) {
-    return Positioned(
-      left: pos.dx - (r + 15),
-      top: pos.dy - (r + 15),
-      child: GestureDetector(
-        onPanUpdate: (details) => onMove(details.delta),
-        child: Container(
-          width: (r + 15) * 2,
-          height: (r + 15) * 2,
-          color: Colors.transparent,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSettings() {
-    return Center(
+Widget _buildHandle(Offset pos, double r, Function(Offset) onMove) {
+  return Positioned(
+    left: pos.dx - (r + 15),
+    top: pos.dy - (r + 15),
+    child: GestureDetector(
+      onPanUpdate: (details) => onMove(details.delta),
       child: Container(
-        width: 300,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.black87,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _activeColor, width: 2),
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                "ڕێکخستنەکان",
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              const Divider(color: Colors.white24),
-              
-              SwitchListTile(
-                title: const Text("پیشاندانی Aim Assist", style: TextStyle(fontSize: 13, color: Colors.white)),
-                value: _showAimAssist,
-                activeThumbColor: _activeColor,
-                onChanged: (val) => setState(() => _showAimAssist = val),
-              ),
-              
-              SwitchListTile(
-                title: const Text("پیشاندانی Navigation Bar", style: TextStyle(fontSize: 13, color: Colors.white)),
-                value: _showAppBar,
-                activeThumbColor: _activeColor,
-                onChanged: (val) => setState(() => _showAppBar = val),
-              ),
-              
-              if (_showAimAssist) ...[
-                _slider("قەبارەی گشتی", _allCircleSize / 100, (v) => setState(() => _allCircleSize= v * 100), 0.05, 1.0),
-_slider("ڕوونی ڕێڕەو", _pathOpacity, (v) => setState(() => _pathOpacity = v), 0.1, 1.0),
-const SizedBox(height: 10),
-const Text("ڕەنگ:", style: TextStyle(color: Colors.white70, fontSize: 12)),
-const SizedBox(height: 5),
-Row(
-mainAxisAlignment: MainAxisAlignment.center,
-children: [
-Colors.white,
-Colors.red,
-Colors.green,
-Colors.cyan,
-Colors.yellow,
-Colors.purple,
-].map((c) => GestureDetector(
-onTap: () => setState(() => _activeColor = c),
-child: Container(
-margin: const EdgeInsets.symmetric(horizontal: 4),
-width: 28,
-height: 28,
-decoration: BoxDecoration(
-color: c,
-shape: BoxShape.circle,
-border: Border.all(
-color: Colors.white,
-width: _activeColor == c ? 2.5 : 0,
-),
-),
-),
-)).toList(),
-),
-],
-          const SizedBox(height: 15),
-          ElevatedButton(
-            onPressed: () => setState(() => _isMenuOpen = false),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _activeColor,
-              foregroundColor: Colors.black,
-            ),
-            child: const Text("داخستن", style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
+        width: (r + 15) * 2,
+        height: (r + 15) * 2,
+        color: Colors.transparent,
       ),
     ),
-  ),
-);
+  );
 }
+
+Widget _buildSettings() {
+  return Center(
+    child: Container(
+      width: 300,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _activeColor, width: 2),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              "ڕێکخستنەکان",
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const Divider(color: Colors.white24),
+            
+            SwitchListTile(
+              title: const Text("پیشاندانی Aim Assist", style: TextStyle(fontSize: 13, color: Colors.white)),
+              value: _showAimAssist,
+              activeThumbColor: _activeColor,
+              onChanged: (val) => setState(() => _showAimAssist = val),
+            ),
+            
+            SwitchListTile(
+              title: const Text("پیشاندانی Navigation Bar", style: TextStyle(fontSize: 13, color: Colors.white)),
+              value: _showAppBar,
+              activeThumbColor: _activeColor,
+              onChanged: (val) => setState(() => _showAppBar = val),
+            ),
+            
+            if (_showAimAssist) ...[
+              _slider("قەبارەی گشتی", _allCircleSize / 100, (v) => setState(() => _allCircleSize = v * 100), 0.05, 1.0),
+              _slider("ڕوونی ڕێڕەو", _pathOpacity, (v) => setState(() => _pathOpacity = v), 0.1, 1.0),
+              _slider("تۆخی هێڵ", _lineThickness / 10, (v) => setState(() => _lineThickness = v * 10), 0.1, 1.0),
+              
+              const SizedBox(height: 10),
+              const Text("ڕەنگ:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 5),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Colors.white,
+                  Colors.red,
+                  Colors.green,
+                  Colors.cyan,
+                  Colors.yellow,
+                  Colors.purple,
+                ].map((c) => GestureDetector(
+                  onTap: () => setState(() => _activeColor = c),
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: c,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white,
+                        width: _activeColor == c ? 2.5 : 0,
+                      ),
+                    ),
+                  ),
+                )).toList(),
+              ),
+            ],
+            
+            const SizedBox(height: 15),
+            const Divider(color: Colors.white24),
+            const Text("زووم:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 5),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      if (_zoomLevel > 0.5) _zoomLevel -= 0.1;
+                      webViewController?.setSettings(
+                        settings: _getWebViewSettings(),
+                      );
+                    });
+                  },
+                  icon: const Icon(Icons.zoom_out, color: Colors.white),
+                  tooltip: 'زووم ئاوت',
+                ),
+                Text(
+                  '${(_zoomLevel * 100).toInt()}%',
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      if (_zoomLevel < 3.0) _zoomLevel += 0.1;
+                      webViewController?.setSettings(
+                        settings: _getWebViewSettings(),
+                      );
+                    });
+                  },
+                  icon: const Icon(Icons.zoom_in, color: Colors.white),
+                  tooltip: 'زووم ئین',
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 15),
+            ElevatedButton(
+              onPressed: () => setState(() => _isMenuOpen = false),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _activeColor,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text("داخستن", style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 Widget _slider(String label, double val, Function(double) onChanged, double min, double max) {
 return Column(
 children: [
@@ -1009,56 +1179,133 @@ _urlController.dispose();
 _popupControllers.clear();
 super.dispose();
 }
+
+
 }
+
+
+
+
 class ProAimPainter extends CustomPainter {
-final Offset pivot, middle, end;
-final double radius, pathWidth, opacity;
-final Color color;
-ProAimPainter({
-required this.pivot,
-required this.middle,
-required this.end,
-required this.radius,
-required this.pathWidth,
-required this.opacity,
-required this.color,
-});
-@override
-void paint(Canvas canvas, Size size) {
-double angle = math.atan2(end.dy - pivot.dy, end.dx - pivot.dx);
-double dist = (end - pivot).distance;
-final pathPaint = Paint()
-  ..color = Colors.white.withOpacity(opacity)
-  ..style = PaintingStyle.fill;
+  final Offset pivot, middle, end;
+  final double radius, pathWidth, opacity;
+  final Color color;
+  final double lineThickness;
+  
+  ProAimPainter({
+    required this.pivot,
+    required this.middle,
+    required this.end,
+    required this.radius,
+    required this.pathWidth,
+    required this.opacity,
+    required this.color,
+    required this.lineThickness,
+  });
 
-canvas.save();
-canvas.translate(pivot.dx, pivot.dy);
-canvas.rotate(angle);
-canvas.drawRRect(
-  RRect.fromLTRBR(0, -pathWidth / 2, dist, pathWidth / 2, Radius.circular(radius)),
-  pathPaint,
-);
+  @override
+  void paint(Canvas canvas, Size size) {
+    double angle = math.atan2(end.dy - pivot.dy, end.dx - pivot.dx);
+    double dist = (end - pivot).distance;
+    
+    // باکگراوندی کاپاسیتی (ڕوونی ڕێڕەو)
+    final pathPaint = Paint()
+      ..color = Colors.white.withOpacity(opacity)
+      ..style = PaintingStyle.fill;
 
-final innerLinePaint = Paint()
-  ..color = Colors.red
-  ..strokeWidth = 2.0
-  ..strokeCap = StrokeCap.round;
+    canvas.save();
+    canvas.translate(pivot.dx, pivot.dy);
+    canvas.rotate(angle);
+    canvas.drawRRect(
+      RRect.fromLTRBR(0, -pathWidth / 2, dist, pathWidth / 2, Radius.circular(radius)),
+      pathPaint,
+    );
 
-canvas.drawLine(const Offset(0, 0), Offset(dist, 0), innerLinePaint);
-canvas.restore();
+    // هێڵی ناوەڕاست بە شێوەی بچربچر (dashed)
+    final innerLinePaint = Paint()
+      ..color = Colors.red
+      ..strokeWidth = lineThickness
+      ..strokeCap = StrokeCap.round;
 
-_drawCircle(canvas, pivot, radius);
-_drawCircle(canvas, middle, radius);
-_drawCircle(canvas, end, radius);
+    // کێشانی هێڵی dashed
+    _drawDashedLine(canvas, const Offset(0, 0), Offset(dist, 0), innerLinePaint);
+    
+    canvas.restore();
+
+    // کێشانی بازنەکان بە هێڵی بچربچر
+    _drawDashedCircle(canvas, pivot, radius, lineThickness);
+    _drawDashedCircle(canvas, middle, radius, lineThickness);
+    _drawCircle(canvas, end, radius, lineThickness);
+  }
+
+  // فەنکشنی نوێ بۆ کێشانی dashed line
+  void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
+    const dashWidth = 8.0;
+    const dashSpace = 4.0;
+    double distance = (end - start).distance;
+    
+    double dashCount = (distance / (dashWidth + dashSpace)).floorToDouble();
+    
+    for (int i = 0; i < dashCount; i++) {
+      double startX = start.dx + (i * (dashWidth + dashSpace));
+      double endX = startX + dashWidth;
+      
+      if (endX > end.dx) endX = end.dx;
+      
+      canvas.drawLine(
+        Offset(startX, start.dy),
+        Offset(endX, end.dy),
+        paint,
+      );
+    }
+  }
+
+  // فەنکشنی نوێ بۆ کێشانی بازنەی بچربچر (pivot و middle)
+  void _drawDashedCircle(Canvas canvas, Offset center, double r, double strokeWidth) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke;
+
+    const dashAngle = 0.2; // قەبارەی هەر بچرێک
+    const gapAngle = 0.15;  // بۆشایی نێوان بچرەکان
+    
+    double currentAngle = 0.0;
+    while (currentAngle < math.pi * 2) {
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: r),
+        currentAngle,
+        dashAngle,
+        false,
+        paint,
+      );
+      currentAngle += dashAngle + gapAngle;
+    }
+    
+    // خاڵی ناوەڕاست
+    canvas.drawCircle(center, 1, paint..style = PaintingStyle.fill);
+  }
+
+  // بازنەی ئاسایی بۆ end point
+  void _drawCircle(Canvas canvas, Offset center, double r, double strokeWidth) {
+    final p = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke;
+    canvas.drawCircle(center, r, p);
+    canvas.drawCircle(center, 1, p..style = PaintingStyle.fill);
+  }
+
+  @override
+bool shouldRepaint(covariant ProAimPainter oldDelegate) {
+  return pivot != oldDelegate.pivot ||
+         middle != oldDelegate.middle ||
+         end != oldDelegate.end ||
+         radius != oldDelegate.radius ||
+         pathWidth != oldDelegate.pathWidth ||
+         opacity != oldDelegate.opacity ||
+         color != oldDelegate.color ||
+         lineThickness != oldDelegate.lineThickness;
 }
-void _drawCircle(Canvas canvas, Offset center, double r) {
-final p = Paint()
-..color = color
-..strokeWidth = 2.0
-..style = PaintingStyle.stroke;
-canvas.drawCircle(center, r, p);
-canvas.drawCircle(center, 1, p..style = PaintingStyle.fill);
 }
-@override
-bool shouldRepaint(covariant CustomPainter old) => true;
-}
+
