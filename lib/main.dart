@@ -31,6 +31,62 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// کلاسی نوێ بۆ هەڵگرتنی داتای هەر Aim Assist
+class AimAssistData {
+  Offset pivotPoint;
+  double lineLength;
+  double currentAngle;
+  double circleSize;
+  double pathOpacity;
+  double lineThickness;
+  Color activeColor;
+  bool isVisible;
+
+  AimAssistData({
+    required this.pivotPoint,
+    this.lineLength = 100.0,
+    this.currentAngle = -0.8,
+    this.circleSize = 20.0,
+    this.pathOpacity = 0.5,
+    this.lineThickness = 2.0,
+    this.activeColor = Colors.white,
+    this.isVisible = true,
+  });
+
+  // کۆپیکردن بۆ Aim Assist دووەم
+  AimAssistData copyWith({
+    Offset? pivotPoint,
+    double? lineLength,
+    double? currentAngle,
+    double? circleSize,
+    double? pathOpacity,
+    double? lineThickness,
+    Color? activeColor,
+    bool? isVisible,
+  }) {
+    return AimAssistData(
+      pivotPoint: pivotPoint ?? this.pivotPoint,
+      lineLength: lineLength ?? this.lineLength,
+      currentAngle: currentAngle ?? this.currentAngle,
+      circleSize: circleSize ?? this.circleSize,
+      pathOpacity: pathOpacity ?? this.pathOpacity,
+      lineThickness: lineThickness ?? this.lineThickness,
+      activeColor: activeColor ?? this.activeColor,
+      isVisible: isVisible ?? this.isVisible,
+    );
+  }
+
+  // حیسابکردنی خاڵەکان
+  Offset get middlePoint => pivotPoint;
+  
+  Offset get pivot {
+    double gap = circleSize * 2.1;
+    return middlePoint + Offset.fromDirection(currentAngle + math.pi, gap);
+  }
+  
+  Offset get endPoint => middlePoint + Offset.fromDirection(currentAngle, lineLength);
+}
+
 class BrowserHome extends StatefulWidget {
   const BrowserHome({super.key});
 
@@ -41,7 +97,6 @@ class BrowserHome extends StatefulWidget {
 class _BrowserHomeState extends State<BrowserHome> {
   InAppWebViewController? webViewController;
   final TextEditingController _urlController = TextEditingController();
-  bool _isDraggingPath = false;
   bool _isLoading = false;
   double _progress = 0.0;
   String _currentUrl = 'https://www.google.com';
@@ -52,18 +107,15 @@ class _BrowserHomeState extends State<BrowserHome> {
   List<String> _bookmarks = [];
   List<String> _history = [];
 
-  // Aim Assist State
+  // Aim Assist State - دوو دانە
   bool _isMenuOpen = false;
-  bool _showAimAssist = true;
   bool _showAppBar = true;
-  Offset _pivotPoint = const Offset(150, 500);
-  double _lineLength = 100.0;
-  double _allCircleSize = 20.0;
-  double _pathOpacity = 0.5;
-  Color _activeColor = Colors.white;
-  double _currentAngle = -0.8;
-  double _zoomLevel = 1.0; // زیادکردنی zoom
-double _lineThickness = 2.0; // تۆخی هێڵ
+  int _selectedAimIndex = 0; // کامیان هەڵبژێردراوە بۆ ڕێکخستن
+  
+  late List<AimAssistData> _aimAssists;
+  
+  double _zoomLevel = 1.0;
+  
   // Store popup controllers
   final Map<int, InAppWebViewController> _popupControllers = {};
   
@@ -75,6 +127,19 @@ double _lineThickness = 2.0; // تۆخی هێڵ
   @override
   void initState() {
     super.initState();
+    
+    // دەستپێکردنی دوو Aim Assist
+    _aimAssists = [
+      AimAssistData(
+        pivotPoint: const Offset(150, 500),
+        activeColor: Colors.white,
+      ),
+      AimAssistData(
+        pivotPoint: const Offset(250, 500),
+        activeColor: Colors.cyan,
+      ),
+    ];
+    
     _loadData();
     _urlController.text = _currentUrl;
     _requestPermissions();
@@ -120,39 +185,38 @@ double _lineThickness = 2.0; // تۆخی هێڵ
     }
   }
 
-void _loadUrl(String url) {
-  String finalUrl = url.trim();
-  if (finalUrl.isEmpty) return;
-  
-  if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
-    if (finalUrl.contains('.') && !finalUrl.contains(' ')) {
-      finalUrl = 'https://$finalUrl';
-    } else {
-      finalUrl = 'https://www.google.com/search?q=${Uri.encodeComponent(finalUrl)}';
+  void _loadUrl(String url) {
+    String finalUrl = url.trim();
+    if (finalUrl.isEmpty) return;
+    
+    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
+      if (finalUrl.contains('.') && !finalUrl.contains(' ')) {
+        finalUrl = 'https://$finalUrl';
+      } else {
+        finalUrl = 'https://www.google.com/search?q=${Uri.encodeComponent(finalUrl)}';
+      }
     }
+    
+    webViewController?.loadUrl(
+      urlRequest: URLRequest(
+        url: WebUri(finalUrl),
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'DNT': '1',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Cache-Control': 'max-age=0',
+        },
+      ),
+    );
+    
+    FocusManager.instance.primaryFocus?.unfocus();
   }
-  
-  // زیادکردنی Headers بۆ خۆڕاگرتن لە وەک براوسەری ڕاستەقینە
-  webViewController?.loadUrl(
-    urlRequest: URLRequest(
-      url: WebUri(finalUrl),
-      headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Cache-Control': 'max-age=0',
-      },
-    ),
-  );
-  
-  FocusManager.instance.primaryFocus?.unfocus();
-}
 
   void _addBookmark() {
     if (!_bookmarks.contains(_currentUrl)) {
@@ -205,69 +269,67 @@ void _loadUrl(String url) {
     }
   }
 
-InAppWebViewSettings _getWebViewSettings() {
-  // بەپێی _currentViewMode UA دیاری بکە
-  String selectedUA;
-  UserPreferredContentMode contentMode;
-  
-  switch (_currentViewMode) {
-    case 'iPhone':
-      selectedUA = iphoneUA;
-      contentMode = UserPreferredContentMode.MOBILE;
-      break;
-    case 'iPad':
-      selectedUA = ipadUA;
-      contentMode = UserPreferredContentMode.MOBILE;
-      break;
-    case 'Desktop':
-    default:
-      selectedUA = desktopUA;
-      contentMode = UserPreferredContentMode.DESKTOP;
-      break;
+  InAppWebViewSettings _getWebViewSettings() {
+    String selectedUA;
+    UserPreferredContentMode contentMode;
+    
+    switch (_currentViewMode) {
+      case 'iPhone':
+        selectedUA = iphoneUA;
+        contentMode = UserPreferredContentMode.MOBILE;
+        break;
+      case 'iPad':
+        selectedUA = ipadUA;
+        contentMode = UserPreferredContentMode.MOBILE;
+        break;
+      case 'Desktop':
+      default:
+        selectedUA = desktopUA;
+        contentMode = UserPreferredContentMode.DESKTOP;
+        break;
+    }
+    
+    return InAppWebViewSettings(
+      javaScriptEnabled: true,
+      domStorageEnabled: true,
+      databaseEnabled: true,
+      allowsInlineMediaPlayback: true,
+      mediaPlaybackRequiresUserGesture: false,
+      javaScriptCanOpenWindowsAutomatically: true,
+      supportMultipleWindows: true,
+      cacheEnabled: true,
+      clearCache: false,
+      thirdPartyCookiesEnabled: true,
+      sharedCookiesEnabled: Platform.isIOS,
+      userAgent: selectedUA,
+      applicationNameForUserAgent: "",
+      useShouldOverrideUrlLoading: false,
+      geolocationEnabled: true,
+      transparentBackground: false,
+      useHybridComposition: Platform.isAndroid,
+      mixedContentMode: Platform.isAndroid ? MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW : null,
+      builtInZoomControls: false,
+      displayZoomControls: false,
+      limitsNavigationsToAppBoundDomains: false,
+      allowsBackForwardNavigationGestures: Platform.isIOS,
+      suppressesIncrementalRendering: false,
+      allowsLinkPreview: false,
+      allowingReadAccessTo: Platform.isIOS ? WebUri("https://") : null,
+      allowFileAccessFromFileURLs: true,
+      allowUniversalAccessFromFileURLs: true,
+      verticalScrollBarEnabled: true,
+      horizontalScrollBarEnabled: true,
+      disableContextMenu: false,
+      useWideViewPort: true,
+      loadWithOverviewMode: true,
+      allowContentAccess: true,
+      allowFileAccess: true,
+      incognito: false,
+      textZoom: (_zoomLevel * 100).toInt(),
+      preferredContentMode: contentMode,
+    );
   }
-  
-  return InAppWebViewSettings(
-    javaScriptEnabled: true,
-    domStorageEnabled: true,
-    databaseEnabled: true,
-    allowsInlineMediaPlayback: true,
-    mediaPlaybackRequiresUserGesture: false,
-    javaScriptCanOpenWindowsAutomatically: true,
-    supportMultipleWindows: true,
-    cacheEnabled: true,
-    clearCache: false,
-    thirdPartyCookiesEnabled: true,
-    sharedCookiesEnabled: Platform.isIOS,
-    
-    userAgent: selectedUA,
-    applicationNameForUserAgent: "",
-    
-    useShouldOverrideUrlLoading: false,
-    geolocationEnabled: true,
-    transparentBackground: false,
-    useHybridComposition: Platform.isAndroid,
-    mixedContentMode: Platform.isAndroid ? MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW : null,
-    builtInZoomControls: false,
-    displayZoomControls: false,
-    limitsNavigationsToAppBoundDomains: false,
-    allowsBackForwardNavigationGestures: Platform.isIOS,
-    suppressesIncrementalRendering: false,
-    allowsLinkPreview: false,
-    allowingReadAccessTo: Platform.isIOS ? WebUri("https://") : null,
-    allowFileAccessFromFileURLs: true,
-    allowUniversalAccessFromFileURLs: true,
-    verticalScrollBarEnabled: true,
-    horizontalScrollBarEnabled: true,
-    disableContextMenu: false,
-    useWideViewPort: true,
-    loadWithOverviewMode: true,
-    allowContentAccess: true,
-    allowFileAccess: true,
-    incognito: false,
-    textZoom: (_zoomLevel * 100).toInt(),  // زووم لێرە زیاد کرا
-    preferredContentMode: contentMode,
-  );
-}
+
   String _getPopupBridgeScript() {
     return """
       (function() {
@@ -297,54 +359,8 @@ InAppWebViewSettings _getWebViewSettings() {
     """;
   }
 
-  // فەنکشن بۆ دیاریکردنی چوارگۆشەی ڕێڕەوەکە
-Rect _calculatePathRect(Offset middle, Offset pivot, Offset end, double pathWidth) {
-  final pathAngle = math.atan2(end.dy - pivot.dy, end.dx - pivot.dx);
-  final pathLength = (end - pivot).distance;
-  
-  // دروستکردنی گۆڕاوی Path
-  final path = Path()
-    ..moveTo(pivot.dx, pivot.dy - pathWidth / 2)
-    ..lineTo(pivot.dx + pathLength * math.cos(pathAngle), 
-             pivot.dy + pathLength * math.sin(pathAngle) - pathWidth / 2)
-    ..lineTo(pivot.dx + pathLength * math.cos(pathAngle), 
-             pivot.dy + pathLength * math.sin(pathAngle) + pathWidth / 2)
-    ..lineTo(pivot.dx, pivot.dy + pathWidth / 2)
-    ..close();
-    
-  return path.getBounds();
-}
-
-// فەنکشن بۆ دیاریکردنی ئایا خاڵ لە ڕێڕەوەکەدایە
-bool _isPointInPath(Offset point, Offset middle, Offset pivot, Offset end, double pathWidth) {
-  final pathAngle = math.atan2(end.dy - pivot.dy, end.dx - pivot.dx);
-  final pathLength = (end - pivot).distance;
-  
-  // گۆڕینی خاڵ بۆ سیستەمی ڕاستەوخۆی ڕێڕەوەکە
-  final translatedPoint = Offset(
-    point.dx - pivot.dx,
-    point.dy - pivot.dy,
-  );
-  
-  // سووڕانەوەی خاڵ بەپێی گۆشەکە
-  final rotatedPoint = Offset(
-    translatedPoint.dx * math.cos(-pathAngle) - translatedPoint.dy * math.sin(-pathAngle),
-    translatedPoint.dx * math.sin(-pathAngle) + translatedPoint.dy * math.cos(-pathAngle),
-  );
-  
-  // چێککردن بۆ ئەوەی ئایا خاڵ لە ناوچەی ڕێڕەوەکەدایە
-  return rotatedPoint.dx >= 0 && 
-         rotatedPoint.dx <= pathLength && 
-         rotatedPoint.dy.abs() <= pathWidth / 2;
-}
-
   @override
   Widget build(BuildContext context) {
-    Offset middlePoint = _pivotPoint; 
-    double gap = _allCircleSize * 2.1;
-    Offset pivotPoint = middlePoint + Offset.fromDirection(_currentAngle + math.pi, gap);
-    Offset endPoint = middlePoint + Offset.fromDirection(_currentAngle, _lineLength);
-
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: _showAppBar ? AppBar(
@@ -584,7 +600,6 @@ bool _isPointInPath(Offset point, Offset middle, Offset pivot, Offset end, doubl
                     configurable: true
                   });
                   
-                  // Override getUserMedia to prevent camera errors
                   if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                     const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
                     navigator.mediaDevices.getUserMedia = function(constraints) {
@@ -603,23 +618,26 @@ bool _isPointInPath(Offset point, Offset middle, Offset pivot, Offset end, doubl
             onLoadStart: (controller, url) {
               setState(() {
                 _isLoading = true;
-                _currentUrl = url.toString();
+                _currentUrl = url?.toString() ?? _currentUrl;
                 _urlController.text = _currentUrl;
               });
             },
             onLoadStop: (controller, url) async {
               setState(() {
                 _isLoading = false;
-                _currentUrl = url.toString();
-                _urlController.text = _currentUrl;
               });
               
-              _addToHistory(_currentUrl);
-              canGoBack = await controller.canGoBack();
-              canGoForward = await controller.canGoForward();
-              setState(() {});
+              if (url != null) {
+                _addToHistory(url.toString());
+              }
               
-              await controller.evaluateJavascript(source: _getPopupBridgeScript());
+              final canBack = await controller.canGoBack();
+              final canForward = await controller.canGoForward();
+              
+              setState(() {
+                canGoBack = canBack;
+                canGoForward = canForward;
+              });
             },
             onProgressChanged: (controller, progress) {
               setState(() {
@@ -627,124 +645,108 @@ bool _isPointInPath(Offset point, Offset middle, Offset pivot, Offset end, doubl
               });
             },
             onCreateWindow: (controller, createWindowAction) async {
+              final windowId = createWindowAction.windowId;
+              
               try {
-                if (!mounted) return false;
-                
-                final requestUrl = createWindowAction.request.url?.toString() ?? '';
-                final windowId = createWindowAction.windowId;
-                
-                debugPrint('Creating window for: $requestUrl');
-                
-                showDialog(
+                await showDialog(
                   context: context,
-                  barrierDismissible: false,
+                  barrierDismissible: true,
                   builder: (dialogContext) {
                     return Dialog(
-                      backgroundColor: Colors.black,
                       insetPadding: const EdgeInsets.all(10),
-                      child: SizedBox(
+                      backgroundColor: Colors.transparent,
+                      child: Container(
                         width: MediaQuery.of(context).size.width * 0.95,
-                        height: MediaQuery.of(context).size.height * 0.85,
+                        height: MediaQuery.of(context).size.height * 0.9,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                         child: Column(
                           children: [
                             Container(
-                              color: Colors.black87,
-                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: const BorderRadius.only(
+                                  topLeft: Radius.circular(12),
+                                  topRight: Radius.circular(12),
+                                ),
+                              ),
                               child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
+                                  const Text(
+                                    'چوونەژوورەوە',
+                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                  ),
                                   IconButton(
-                                    icon: const Icon(Icons.close, color: Colors.white),
-                                    onPressed: () {
-                                      if (dialogContext.mounted) {
-                                        Navigator.pop(dialogContext);
-                                      }
-                                    },
+                                    icon: const Icon(Icons.close, size: 22),
+                                    onPressed: () => Navigator.pop(dialogContext),
                                   ),
-                                  const Expanded(
-                                    child: Text(
-                                      "پەنجەرەی لۆگین",
-                                      style: TextStyle(color: Colors.white, fontSize: 16),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 48),
                                 ],
                               ),
                             ),
                             Expanded(
-                              child: InAppWebView(
-                                windowId: windowId,
-                                initialSettings: _getWebViewSettings(),
-                                onWebViewCreated: (popupController) async {
-                                  _popupControllers[windowId] = popupController;
-                                                                  
-                                  await controller.evaluateJavascript(source: """
-  (function() {
-    // Override fetch to add headers
-    const originalFetch = window.fetch;
-    window.fetch = function(...args) {
-      if (args[1]) {
-        args[1].headers = {
-          ...args[1].headers,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-        };
-      }
-      return originalFetch.apply(this, args);
-    };
-  })();
-""");
-                                },
-                                onLoadStop: (popupController, url) async {
-                                  debugPrint('Popup loaded: ${url?.toString()}');
-                                  
-                                  if (url != null) {
-                                    final urlString = url.toString();
-                                    
-                                    // Check for successful OAuth
-                                    if (urlString.contains('code=') || 
-                                        urlString.contains('access_token=') ||
-                                        (!urlString.contains('accounts.google.com') &&
-                                         !urlString.contains('oauth') &&
-                                         !urlString.contains('login') &&
-                                         !urlString.contains('signin') &&
-                                         !urlString.contains('auth/handler') &&
-                                         !urlString.contains('firebaseapp.com'))) {
+                              child: ClipRRect(
+                                borderRadius: const BorderRadius.only(
+                                  bottomLeft: Radius.circular(12),
+                                  bottomRight: Radius.circular(12),
+                                ),
+                                child: InAppWebView(
+                                  windowId: windowId,
+                                  initialSettings: _getWebViewSettings(),
+                                  onWebViewCreated: (popupController) {
+                                    _popupControllers[windowId] = popupController;
+                                  },
+                                  onLoadStop: (popupController, url) async {
+                                    if (url != null) {
+                                      final urlString = url.toString();
                                       
-                                      debugPrint('OAuth completed successfully');
-                                      await Future.delayed(const Duration(milliseconds: 1000));
-                                      
-                                      if (dialogContext.mounted) {
-                                        Navigator.pop(dialogContext);
-                                      }
-                                      
-                                      await Future.delayed(const Duration(milliseconds: 300));
-                                      webViewController?.reload();
-                                      
-                                      if (mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                            content: Text('لۆگین سەرکەوتوو بوو! ✓'),
-                                            backgroundColor: Colors.green,
-                                            duration: Duration(seconds: 2),
-                                          ),
-                                        );
+                                      if (urlString.contains('code=') || 
+                                          urlString.contains('access_token=') ||
+                                          (!urlString.contains('accounts.google.com') &&
+                                           !urlString.contains('oauth') &&
+                                           !urlString.contains('login') &&
+                                           !urlString.contains('signin') &&
+                                           !urlString.contains('auth/handler') &&
+                                           !urlString.contains('firebaseapp.com'))) {
+                                        
+                                        debugPrint('OAuth completed successfully');
+                                        await Future.delayed(const Duration(milliseconds: 1000));
+                                        
+                                        if (dialogContext.mounted) {
+                                          Navigator.pop(dialogContext);
+                                        }
+                                        
+                                        await Future.delayed(const Duration(milliseconds: 300));
+                                        webViewController?.reload();
+                                        
+                                        if (mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('لۆگین سەرکەوتوو بوو! ✓'),
+                                              backgroundColor: Colors.green,
+                                              duration: Duration(seconds: 2),
+                                            ),
+                                          );
+                                        }
                                       }
                                     }
-                                  }
-                                },
-                                onCloseWindow: (popupController) {
-                                  if (dialogContext.mounted) {
-                                    Navigator.pop(dialogContext);
-                                  }
-                                  _popupControllers.remove(windowId);
-                                                                },
-                                onConsoleMessage: (popupController, consoleMessage) {
-                                  // Suppress camera errors in popup
-                                  if (!consoleMessage.message.contains('camera') &&
-                                      !consoleMessage.message.contains('Camera')) {
-                                    debugPrint('Popup: ${consoleMessage.message}');
-                                  }
-                                },
+                                  },
+                                  onCloseWindow: (popupController) {
+                                    if (dialogContext.mounted) {
+                                      Navigator.pop(dialogContext);
+                                    }
+                                    _popupControllers.remove(windowId);
+                                  },
+                                  onConsoleMessage: (popupController, consoleMessage) {
+                                    if (!consoleMessage.message.contains('camera') &&
+                                        !consoleMessage.message.contains('Camera')) {
+                                      debugPrint('Popup: ${consoleMessage.message}');
+                                    }
+                                  },
+                                ),
                               ),
                             ),
                           ],
@@ -764,14 +766,12 @@ bool _isPointInPath(Offset point, Offset middle, Offset pivot, Offset end, doubl
               return NavigationActionPolicy.ALLOW;
             },
             onPermissionRequest: (controller, request) async {
-              // Grant all permissions except camera/microphone if not needed
               return PermissionResponse(
                 resources: request.resources,
                 action: PermissionResponseAction.GRANT,
               );
             },
             onConsoleMessage: (controller, consoleMessage) {
-              // Suppress camera-related errors
               if (!consoleMessage.message.contains('camera') &&
                   !consoleMessage.message.contains('Camera') &&
                   !consoleMessage.message.contains('VideoCapture')) {
@@ -780,138 +780,15 @@ bool _isPointInPath(Offset point, Offset middle, Offset pivot, Offset end, doubl
             },
           ),
 
-          // AIM ASSIST LAYER
-// AIM ASSIST LAYER
-if (_showAimAssist) ...[
-  Positioned.fill(
-    child: IgnorePointer(
-      child: RepaintBoundary(
-        child: CustomPaint(
-          painter: ProAimPainter(
-            pivot: pivotPoint, 
-            middle: middlePoint,
-            end: endPoint,
-            radius: _allCircleSize,
-            pathWidth: _allCircleSize * 1.9,
-            opacity: _pathOpacity,
-            color: _activeColor,
-            lineThickness: _lineThickness,
-          ),
-        ),
-      ),
-    ),
-  ),
-
-  // DRAG HANDLE لە نێوان pivot و middle
-  Positioned(
-    left: (pivotPoint.dx + middlePoint.dx) / 2 - 20,
-    top: (pivotPoint.dy + middlePoint.dy) / 2 - 20,
- child: GestureDetector(
-  behavior: HitTestBehavior.opaque,
-  onPanStart: (_) {},
-  onPanUpdate: (details) {
-    setState(() {
-      _pivotPoint += details.delta;
-    });
-  },
-      child: Container(
-        width: 40,
-        height: 40,
-        color: Colors.transparent,
-        child: Center(
-          child: Container(
-            width: 15,
-            height: 15,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _activeColor.withOpacity(0.0),
-            ),
-          ),
-        ),
-      ),
-    ),
-  ),
-  
-  // DRAG HANDLE لە نێوان middle و end
-  Positioned(
-    left: (middlePoint.dx + endPoint.dx) / 2 - 20,
-    top: (middlePoint.dy + endPoint.dy) / 2 - 20,
-    child: GestureDetector(
-  behavior: HitTestBehavior.opaque,
-  onPanStart: (_) {},
-  onPanUpdate: (details) {
-    setState(() {
-      _pivotPoint += details.delta;
-    });
-  },
-      child: Container(
-        width: 40,
-        height: 40,
-        color: const Color.fromARGB(0, 0, 0, 0),
-        child: Center(
-          child: Container(
-            width: 15,
-            height: 15,
-            
-            decoration: BoxDecoration(
-              
-              shape: BoxShape.circle,
-              color: _activeColor.withOpacity(0.1),
-            ),
-          ),
-        ),
-      ),
-    ),
-  ),
-  
-  // END POINT HANDLE
-  // END POINT HANDLE - ناوچەی گرتنی جیا و گەورەتر
-  Positioned(
-    left: endPoint.dx - 30, // قەبارەی جیاکراوی 60x60
-    top: endPoint.dy - 30,
-   child: GestureDetector(
-  behavior: HitTestBehavior.opaque,
-  onPanStart: (_) {},
-  onPanUpdate: (details) {
-    setState(() {
-      Offset newEnd = endPoint + details.delta;
-          _lineLength = (newEnd - middlePoint).distance;
-          
-          _currentAngle = math.atan2(
-            newEnd.dy - middlePoint.dy, 
-            newEnd.dx - middlePoint.dx
-          );
-
-          double gap = _allCircleSize * 2.1;
-          if (_lineLength < gap + 20) _lineLength = gap + 20;
-        });
-      },
-      child: Container(
-        width: 60, // قەبارەی جیا کە ناگۆڕێت
-        height: 60,
-        color: const Color.fromARGB(0, 0, 0, 0),
-        child: Center(
-          child: Container(
-            width: _allCircleSize * 1.5,
-            height: _allCircleSize * 1.5,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _activeColor.withOpacity(0.0),
-              border: Border.all(color: _activeColor, width: 2),
-            ),
-          ),
-        ),
-      ),
-    ),
-  ),
-],
+          // AIM ASSIST LAYERS - هەردوو Aim Assist
+          ..._buildAimAssistLayers(),
 
           // SETTINGS BUTTON
           Positioned(
             right: 10, 
             top: _showAppBar ? 10 : MediaQuery.of(context).padding.top + 10,
             child: FloatingActionButton.small(
-              backgroundColor: _activeColor.withOpacity(0.5),
+              backgroundColor: _aimAssists[_selectedAimIndex].activeColor.withOpacity(0.5),
               child: const Icon(Icons.tune, color: Colors.white, size: 18),
               onPressed: () => setState(() => _isMenuOpen = !_isMenuOpen),
             ),
@@ -923,268 +800,457 @@ if (_showAimAssist) ...[
     );
   }
 
-Widget _buildHandle(Offset pos, double r, Function(Offset) onMove) {
-  return Positioned(
-    left: pos.dx - (r + 15),
-    top: pos.dy - (r + 15),
-    child: GestureDetector(
-      onPanUpdate: (details) => onMove(details.delta),
-      child: Container(
-        width: (r + 15) * 2,
-        height: (r + 15) * 2,
-        color: Colors.transparent,
-      ),
-    ),
-  );
-}
+  // دروستکردنی هەردوو Aim Assist
+  List<Widget> _buildAimAssistLayers() {
+    List<Widget> widgets = [];
+    
+    for (int i = 0; i < _aimAssists.length; i++) {
+      final aim = _aimAssists[i];
+      if (!aim.isVisible) continue;
+      
+      final middlePoint = aim.middlePoint;
+      final pivotPoint = aim.pivot;
+      final endPoint = aim.endPoint;
+      
+      // کێشانی ئایم ئەسست
+      widgets.add(
+        Positioned.fill(
+          child: IgnorePointer(
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: ProAimPainter(
+                  pivot: pivotPoint,
+                  middle: middlePoint,
+                  end: endPoint,
+                  radius: aim.circleSize,
+                  pathWidth: aim.circleSize * 1.9,
+                  opacity: aim.pathOpacity,
+                  color: aim.activeColor,
+                  lineThickness: aim.lineThickness,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      
+      // ناوچەی گواستنەوەی تەواوی ڕێڕەوەکە (لە ناوەڕاستی ڕێڕەوەکە)
+      final pathCenter = Offset(
+        (pivotPoint.dx + endPoint.dx) / 2,
+        (pivotPoint.dy + endPoint.dy) / 2,
+      );
+      
+      widgets.add(
+        Positioned(
+          left: pathCenter.dx - 35,
+          top: pathCenter.dy - 35,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanUpdate: (details) {
+              setState(() {
+                _aimAssists[i].pivotPoint += details.delta;
+              });
+            },
+            child: Container(
+              width: 70,
+              height: 70,
+              decoration: BoxDecoration(
+                color: aim.activeColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: aim.activeColor.withOpacity(0.1),
+                  width: 1,
+                ),
+              ),
+              child: Icon(
+                Icons.open_with,
+                color: aim.activeColor.withOpacity(0.1),
+                size: 20,
+              ),
+            ),
+          ),
+        ),
+      );
+      
+      // END POINT HANDLE - بۆ گۆڕینی گۆشە و درێژی
+      widgets.add(
+        Positioned(
+          left: endPoint.dx - 30,
+          top: endPoint.dy - 30,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanUpdate: (details) {
+              setState(() {
+                Offset newEnd = endPoint + details.delta;
+                _aimAssists[i].lineLength = (newEnd - middlePoint).distance;
+                
+                _aimAssists[i].currentAngle = math.atan2(
+                  newEnd.dy - middlePoint.dy,
+                  newEnd.dx - middlePoint.dx,
+                );
+                
+                double gap = aim.circleSize * 2.1;
+                if (_aimAssists[i].lineLength < gap + 20) {
+                  _aimAssists[i].lineLength = gap + 20;
+                }
+              });
+            },
+            child: Container(
+              width: 60,
+              height: 60,
+              color: Colors.transparent,
+              child: Center(
+                child: Container(
+                  width: aim.circleSize * 1.5,
+                  height: aim.circleSize * 1.5,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: aim.activeColor.withOpacity(0.1),
+                    border: Border.all(color: aim.activeColor, width: 2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    
+    return widgets;
+  }
 
-Widget _buildSettings() {
-  return Center(
-    child: Container(
-      width: 300,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.black87,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _activeColor, width: 2),
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              "ڕێکخستنەکان",
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            const Divider(color: Colors.white24),
-            
-            SwitchListTile(
-              title: const Text("پیشاندانی Aim Assist", style: TextStyle(fontSize: 13, color: Colors.white)),
-              value: _showAimAssist,
-              activeThumbColor: _activeColor,
-              onChanged: (val) => setState(() => _showAimAssist = val),
-            ),
-            
-            SwitchListTile(
-              title: const Text("پیشاندانی Navigation Bar", style: TextStyle(fontSize: 13, color: Colors.white)),
-              value: _showAppBar,
-              activeThumbColor: _activeColor,
-              onChanged: (val) => setState(() => _showAppBar = val),
-            ),
-            
-            if (_showAimAssist) ...[
-              _slider("قەبارەی گشتی", _allCircleSize / 100, (v) => setState(() => _allCircleSize = v * 100), 0.05, 1.0),
-              _slider("ڕوونی ڕێڕەو", _pathOpacity, (v) => setState(() => _pathOpacity = v), 0.1, 1.0),
-              _slider("تۆخی هێڵ", _lineThickness / 10, (v) => setState(() => _lineThickness = v * 10), 0.1, 1.0),
+  Widget _buildSettings() {
+    final currentAim = _aimAssists[_selectedAimIndex];
+    
+    return Center(
+      child: Container(
+        width: 320,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: currentAim.activeColor, width: 2),
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                "ڕێکخستنەکان",
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const Divider(color: Colors.white24),
               
-              const SizedBox(height: 10),
-              const Text("ڕەنگ:", style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 5),
+              // هەڵبژاردنی Aim Assist
+              const Text("هەڵبژاردنی Aim Assist:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Colors.white,
-                  Colors.red,
-                  Colors.green,
-                  Colors.cyan,
-                  Colors.yellow,
-                  Colors.purple,
-                ].map((c) => GestureDetector(
-                  onTap: () => setState(() => _activeColor = c),
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: c,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: Colors.white,
-                        width: _activeColor == c ? 2.5 : 0,
+                  for (int i = 0; i < _aimAssists.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: GestureDetector(
+                        onTap: () => setState(() => _selectedAimIndex = i),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: _selectedAimIndex == i 
+                                ? _aimAssists[i].activeColor 
+                                : Colors.grey[800],
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: _aimAssists[i].activeColor,
+                              width: 2,
+                            ),
+                          ),
+                          child: Text(
+                            'Aim ${i + 1}',
+                            style: TextStyle(
+                              color: _selectedAimIndex == i ? Colors.black : Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                )).toList(),
+                ],
               ),
-            ],
-            
-            const SizedBox(height: 15),
-            const Divider(color: Colors.white24),
-            const Text("زووم:", style: TextStyle(color: Colors.white70, fontSize: 12)),
-            const SizedBox(height: 5),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                IconButton(
-                  onPressed: () {
-                    setState(() {
-                      if (_zoomLevel > 0.5) _zoomLevel -= 0.1;
-                      webViewController?.setSettings(
-                        settings: _getWebViewSettings(),
-                      );
-                    });
-                  },
-                  icon: const Icon(Icons.zoom_out, color: Colors.white),
-                  tooltip: 'زووم ئاوت',
+              
+              const SizedBox(height: 10),
+              
+              SwitchListTile(
+                title: Text(
+                  "پیشاندانی Aim ${_selectedAimIndex + 1}",
+                  style: const TextStyle(fontSize: 13, color: Colors.white),
                 ),
-                Text(
-                  '${(_zoomLevel * 100).toInt()}%',
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                value: currentAim.isVisible,
+                activeThumbColor: currentAim.activeColor,
+                onChanged: (val) => setState(() => _aimAssists[_selectedAimIndex].isVisible = val),
+              ),
+              
+              SwitchListTile(
+                title: const Text("پیشاندانی Navigation Bar", style: TextStyle(fontSize: 13, color: Colors.white)),
+                value: _showAppBar,
+                activeThumbColor: currentAim.activeColor,
+                onChanged: (val) => setState(() => _showAppBar = val),
+              ),
+              
+              if (currentAim.isVisible) ...[
+                _slider(
+                  "قەبارەی گشتی",
+                  currentAim.circleSize / 100,
+                  (v) => setState(() => _aimAssists[_selectedAimIndex].circleSize = v * 100),
+                  0.05,
+                  1.0,
                 ),
-                IconButton(
-                  onPressed: () {
-                    setState(() {
-                      if (_zoomLevel < 3.0) _zoomLevel += 0.1;
-                      webViewController?.setSettings(
-                        settings: _getWebViewSettings(),
-                      );
-                    });
-                  },
-                  icon: const Icon(Icons.zoom_in, color: Colors.white),
-                  tooltip: 'زووم ئین',
+                _slider(
+                  "ڕوونی ڕێڕەو",
+                  currentAim.pathOpacity,
+                  (v) => setState(() => _aimAssists[_selectedAimIndex].pathOpacity = v),
+                  0.1,
+                  1.0,
+                ),
+                _slider(
+                  "تۆخی هێڵ",
+                  currentAim.lineThickness / 10,
+                  (v) => setState(() => _aimAssists[_selectedAimIndex].lineThickness = v * 10),
+                  0.1,
+                  1.0,
+                ),
+                
+                const SizedBox(height: 10),
+                const Text("ڕەنگ:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                const SizedBox(height: 5),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Colors.white,
+                    Colors.red,
+                    Colors.green,
+                    Colors.cyan,
+                    Colors.yellow,
+                    Colors.purple,
+                    Colors.orange,
+                    Colors.pink,
+                  ].map((c) => GestureDetector(
+                    onTap: () => setState(() => _aimAssists[_selectedAimIndex].activeColor = c),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: c,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white,
+                          width: currentAim.activeColor == c ? 2.5 : 0,
+                        ),
+                      ),
+                    ),
+                  )).toList(),
                 ),
               ],
-            ),
-            
-            const SizedBox(height: 15),
-            ElevatedButton(
-              onPressed: () => setState(() => _isMenuOpen = false),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _activeColor,
-                foregroundColor: Colors.black,
+              
+              const SizedBox(height: 15),
+              const Divider(color: Colors.white24),
+              
+              // کۆپیکردنی ڕێکخستنەکان بۆ Aim دیکە
+              if (_aimAssists.length == 2)
+                ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      int otherIndex = _selectedAimIndex == 0 ? 1 : 0;
+                      _aimAssists[otherIndex] = _aimAssists[_selectedAimIndex].copyWith(
+                        pivotPoint: _aimAssists[otherIndex].pivotPoint,
+                      );
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('ڕێکخستنەکان کۆپی کران')),
+                    );
+                  },
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('کۆپیکردن بۆ Aim دیکە'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[700],
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              
+              const SizedBox(height: 10),
+              const Text("زووم:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 5),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton(
+                    onPressed: () {
+                      setState(() {
+                        if (_zoomLevel > 0.5) _zoomLevel -= 0.1;
+                        webViewController?.setSettings(
+                          settings: _getWebViewSettings(),
+                        );
+                      });
+                    },
+                    icon: const Icon(Icons.zoom_out, color: Colors.white),
+                    tooltip: 'زووم ئاوت',
+                  ),
+                  Text(
+                    '${(_zoomLevel * 100).toInt()}%',
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                  IconButton(
+                    onPressed: () {
+                      setState(() {
+                        if (_zoomLevel < 3.0) _zoomLevel += 0.1;
+                        webViewController?.setSettings(
+                          settings: _getWebViewSettings(),
+                        );
+                      });
+                    },
+                    icon: const Icon(Icons.zoom_in, color: Colors.white),
+                    tooltip: 'زووم ئین',
+                  ),
+                ],
               ),
-              child: const Text("داخستن", style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ],
+              
+              const SizedBox(height: 15),
+              ElevatedButton(
+                onPressed: () => setState(() => _isMenuOpen = false),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: currentAim.activeColor,
+                  foregroundColor: Colors.black,
+                ),
+                child: const Text("داخستن", style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
-Widget _slider(String label, double val, Function(double) onChanged, double min, double max) {
-return Column(
-children: [
-Text(label, style: const TextStyle(fontSize: 11, color: Colors.white70)),
-Slider(
-value: val,
-min: min,
-max: max,
-activeColor: _activeColor,
-onChanged: onChanged,
-),
-],
-);
-}
-void _showBookmarks() {
-showDialog(
-context: context,
-builder: (context) => AlertDialog(
-title: const Text('نیشانەکان'),
-content: SizedBox(
-width: double.maxFinite,
-child: _bookmarks.isEmpty
-? const Text('هیچ نیشانەیەک نییە')
-: ListView.builder(
-shrinkWrap: true,
-itemCount: _bookmarks.length,
-itemBuilder: (context, index) => ListTile(
-leading: const Icon(Icons.bookmark),
-title: Text(
-_bookmarks[index],
-maxLines: 1,
-overflow: TextOverflow.ellipsis,
-),
-trailing: IconButton(
-icon: const Icon(Icons.delete, color: Colors.red),
-onPressed: () {
-setState(() {
-_bookmarks.removeAt(index);
-_saveBookmarks();
-});
-Navigator.pop(context);
-_showBookmarks();
-},
-),
-onTap: () {
-_loadUrl(_bookmarks[index]);
-Navigator.pop(context);
-},
-),
-),
-),
-actions: [
-TextButton(
-onPressed: () => Navigator.pop(context),
-child: const Text('داخستن'),
-),
-],
-),
-);
-}
-void _showHistory() {
-showDialog(
-context: context,
-builder: (context) => AlertDialog(
-title: const Text('مێژووی سەردان'),
-content: SizedBox(
-width: double.maxFinite,
-child: _history.isEmpty
-? const Text('هیچ مێژوویەک نییە')
-: ListView.builder(
-shrinkWrap: true,
-itemCount: _history.reversed.toList().length,
-itemBuilder: (context, index) {
-final reversedList = _history.reversed.toList();
-return ListTile(
-leading: const Icon(Icons.history),
-title: Text(
-reversedList[index],
-maxLines: 1,
-overflow: TextOverflow.ellipsis,
-),
-onTap: () {
-_loadUrl(reversedList[index]);
-Navigator.pop(context);
-},
-);
-},
-),
-),
-actions: [
-TextButton(
-onPressed: () {
-setState(() {
-_history.clear();
-_saveHistory();
-});
-Navigator.pop(context);
-},
-child: const Text(
-'سڕینەوەی هەموو',
-style: TextStyle(color: Colors.red),
-),
-),
-TextButton(
-onPressed: () => Navigator.pop(context),
-child: const Text('داخستن'),
-),
-],
-),
-);
-}
-@override
-void dispose() {
-_urlController.dispose();
-_popupControllers.clear();
-super.dispose();
-}
+  Widget _slider(String label, double val, Function(double) onChanged, double min, double max) {
+    return Column(
+      children: [
+        Text(label, style: const TextStyle(fontSize: 11, color: Colors.white70)),
+        Slider(
+          value: val.clamp(min, max),
+          min: min,
+          max: max,
+          activeColor: _aimAssists[_selectedAimIndex].activeColor,
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
 
+  void _showBookmarks() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('نیشانەکان'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: _bookmarks.isEmpty
+              ? const Text('هیچ نیشانەیەک نییە')
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _bookmarks.length,
+                  itemBuilder: (context, index) => ListTile(
+                    leading: const Icon(Icons.bookmark),
+                    title: Text(
+                      _bookmarks[index],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () {
+                        setState(() {
+                          _bookmarks.removeAt(index);
+                          _saveBookmarks();
+                        });
+                        Navigator.pop(context);
+                        _showBookmarks();
+                      },
+                    ),
+                    onTap: () {
+                      _loadUrl(_bookmarks[index]);
+                      Navigator.pop(context);
+                    },
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('داخستن'),
+          ),
+        ],
+      ),
+    );
+  }
 
+  void _showHistory() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('مێژووی سەردان'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: _history.isEmpty
+              ? const Text('هیچ مێژوویەک نییە')
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _history.reversed.toList().length,
+                  itemBuilder: (context, index) {
+                    final reversedList = _history.reversed.toList();
+                    return ListTile(
+                      leading: const Icon(Icons.history),
+                      title: Text(
+                        reversedList[index],
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onTap: () {
+                        _loadUrl(reversedList[index]);
+                        Navigator.pop(context);
+                      },
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _history.clear();
+                _saveHistory();
+              });
+              Navigator.pop(context);
+            },
+            child: const Text(
+              'سڕینەوەی هەموو',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('داخستن'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    _popupControllers.clear();
+    super.dispose();
+  }
 }
-
-
-
 
 class ProAimPainter extends CustomPainter {
   final Offset pivot, middle, end;
@@ -1297,15 +1363,14 @@ class ProAimPainter extends CustomPainter {
   }
 
   @override
-bool shouldRepaint(covariant ProAimPainter oldDelegate) {
-  return pivot != oldDelegate.pivot ||
-         middle != oldDelegate.middle ||
-         end != oldDelegate.end ||
-         radius != oldDelegate.radius ||
-         pathWidth != oldDelegate.pathWidth ||
-         opacity != oldDelegate.opacity ||
-         color != oldDelegate.color ||
-         lineThickness != oldDelegate.lineThickness;
+  bool shouldRepaint(covariant ProAimPainter oldDelegate) {
+    return pivot != oldDelegate.pivot ||
+           middle != oldDelegate.middle ||
+           end != oldDelegate.end ||
+           radius != oldDelegate.radius ||
+           pathWidth != oldDelegate.pathWidth ||
+           opacity != oldDelegate.opacity ||
+           color != oldDelegate.color ||
+           lineThickness != oldDelegate.lineThickness;
+  }
 }
-}
-
