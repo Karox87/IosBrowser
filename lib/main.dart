@@ -830,22 +830,6 @@ class _BrowserHomeState extends State<BrowserHome> {
     _isContinuousChanging = false;
   }
 
-  // ویدجێتی پڕۆفیشناڵ بۆ گواستنەوە - بێ هیچ جوڵەیەکی زیادە
-  Widget _buildDragHandle(int aimIndex, double size) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      dragStartBehavior: DragStartBehavior.down,
-      onPanUpdate: (details) {
-        _aimAssists[aimIndex].pivotPoint += details.delta;
-        setState(() {});
-      },
-      child: SizedBox(
-        width: size,
-        height: size,
-      ),
-    );
-  }
-
   // دروستکردنی هەردوو Aim Assist
   List<Widget> _buildAimAssistLayers() {
     List<Widget> widgets = [];
@@ -882,31 +866,22 @@ class _BrowserHomeState extends State<BrowserHome> {
       
       final int currentIndex = i;
       
-      // دوگمەی یەکەم - لە ناوەڕاستی تەواوی ڕێڕەوەکە
-      final pathCenter = Offset(
-        (pivotPoint.dx + endPoint.dx) / 2,
-        (pivotPoint.dy + endPoint.dy) / 2,
-      );
-      
+      // ناوچەی گواستنەوە - تەواوی ڕێڕەوەکە جگە لە end
+      // بەکارهێنانی CustomPainter بۆ hit testing دەقیق
       widgets.add(
-        Positioned(
-          left: pathCenter.dx - 35,
-          top: pathCenter.dy - 35,
-          child: _buildDragHandle(currentIndex, 70),
-        ),
-      );
-      
-      // دوگمەی دووەم - لە نێوان middle و pivot
-      final betweenPivotMiddle = Offset(
-        (pivotPoint.dx + middlePoint.dx) / 2,
-        (pivotPoint.dy + middlePoint.dy) / 2,
-      );
-      
-      widgets.add(
-        Positioned(
-          left: betweenPivotMiddle.dx - 25,
-          top: betweenPivotMiddle.dy - 25,
-          child: _buildDragHandle(currentIndex, 50),
+        Positioned.fill(
+          child: _AimDragArea(
+            pivotPoint: pivotPoint,
+            middlePoint: middlePoint,
+            endPoint: endPoint,
+            pathWidth: aim.circleSize * 1.9,
+            circleSize: aim.circleSize,
+            onDrag: (delta) {
+              setState(() {
+                _aimAssists[currentIndex].pivotPoint += delta;
+              });
+            },
+          ),
         ),
       );
       
@@ -1486,5 +1461,96 @@ class ProAimPainter extends CustomPainter {
            opacity != oldDelegate.opacity ||
            color != oldDelegate.color ||
            lineThickness != oldDelegate.lineThickness;
+  }
+}
+
+// کلاسی تایبەت بۆ گواستنەوە - دەست لە هەر شوێنێکی ڕێڕەوەکە جگە لە end
+class _AimDragArea extends StatefulWidget {
+  final Offset pivotPoint;
+  final Offset middlePoint;
+  final Offset endPoint;
+  final double pathWidth;
+  final double circleSize;
+  final Function(Offset delta) onDrag;
+
+  const _AimDragArea({
+    required this.pivotPoint,
+    required this.middlePoint,
+    required this.endPoint,
+    required this.pathWidth,
+    required this.circleSize,
+    required this.onDrag,
+  });
+
+  @override
+  State<_AimDragArea> createState() => _AimDragAreaState();
+}
+
+class _AimDragAreaState extends State<_AimDragArea> {
+  bool _isDragging = false;
+  Offset? _lastPosition;
+
+  // چێککردن ئایا خاڵ لەسەر ناوچەی ڕێڕەوەکەیە (جگە لە end)
+  bool _isPointInDragArea(Offset point) {
+    // ئەگەر لەسەر end بوو، نەگەڕێتەوە
+    double distToEnd = (point - widget.endPoint).distance;
+    if (distToEnd <= widget.circleSize + 20) return false;
+
+    // چێککردن بۆ pivot
+    double distToPivot = (point - widget.pivotPoint).distance;
+    if (distToPivot <= widget.circleSize + 15) return true;
+
+    // چێککردن بۆ middle
+    double distToMiddle = (point - widget.middlePoint).distance;
+    if (distToMiddle <= widget.circleSize + 15) return true;
+
+    // چێککردن بۆ ڕێڕەوەکە
+    double angle = math.atan2(
+      widget.endPoint.dy - widget.pivotPoint.dy,
+      widget.endPoint.dx - widget.pivotPoint.dx,
+    );
+    double pathLength = (widget.endPoint - widget.pivotPoint).distance;
+
+    Offset translated = Offset(
+      point.dx - widget.pivotPoint.dx,
+      point.dy - widget.pivotPoint.dy,
+    );
+    Offset rotated = Offset(
+      translated.dx * math.cos(-angle) - translated.dy * math.sin(-angle),
+      translated.dx * math.sin(-angle) + translated.dy * math.cos(-angle),
+    );
+
+    return rotated.dx >= -5 &&
+           rotated.dx <= pathLength - widget.circleSize - 15 &&
+           rotated.dy.abs() <= widget.pathWidth / 2 + 5;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (event) {
+        if (_isPointInDragArea(event.localPosition)) {
+          _isDragging = true;
+          _lastPosition = event.localPosition;
+        }
+      },
+      onPointerMove: (event) {
+        if (_isDragging && _lastPosition != null) {
+          final delta = event.localPosition - _lastPosition!;
+          widget.onDrag(delta);
+          _lastPosition = event.localPosition;
+        }
+      },
+      onPointerUp: (event) {
+        _isDragging = false;
+        _lastPosition = null;
+      },
+      onPointerCancel: (event) {
+        _isDragging = false;
+        _lastPosition = null;
+      },
+      child: const SizedBox.expand(),
+    );
   }
 }
