@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -115,6 +116,9 @@ class _BrowserHomeState extends State<BrowserHome> {
   late List<AimAssistData> _aimAssists;
   
   double _zoomLevel = 1.0;
+  
+  // بۆ گۆڕینی بەردەوام کاتێک دەست گرتە سەر
+  bool _isContinuousChanging = false;
   
   // Store popup controllers
   final Map<int, InAppWebViewController> _popupControllers = {};
@@ -800,6 +804,48 @@ class _BrowserHomeState extends State<BrowserHome> {
     );
   }
 
+  // فەنکشن بۆ دەستپێکردنی گۆڕینی بەردەوام
+  void _startContinuousChange(double delta, String property) {
+    _isContinuousChanging = true;
+    _continuousChange(delta, property);
+  }
+  
+  void _continuousChange(double delta, String property) async {
+    while (_isContinuousChanging) {
+      await Future.delayed(const Duration(milliseconds: 80));
+      if (!_isContinuousChanging) break;
+      
+      setState(() {
+        if (property == 'circleSize') {
+          double newVal = _aimAssists[_selectedAimIndex].circleSize + delta;
+          if (newVal >= 5 && newVal <= 100) {
+            _aimAssists[_selectedAimIndex].circleSize = newVal;
+          }
+        }
+      });
+    }
+  }
+  
+  void _stopContinuousChange() {
+    _isContinuousChanging = false;
+  }
+
+  // ویدجێتی پڕۆفیشناڵ بۆ گواستنەوە - بێ هیچ جوڵەیەکی زیادە
+  Widget _buildDragHandle(int aimIndex, double size) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      dragStartBehavior: DragStartBehavior.down,
+      onPanUpdate: (details) {
+        _aimAssists[aimIndex].pivotPoint += details.delta;
+        setState(() {});
+      },
+      child: SizedBox(
+        width: size,
+        height: size,
+      ),
+    );
+  }
+
   // دروستکردنی هەردوو Aim Assist
   List<Widget> _buildAimAssistLayers() {
     List<Widget> widgets = [];
@@ -834,7 +880,9 @@ class _BrowserHomeState extends State<BrowserHome> {
         ),
       );
       
-      // ناوچەی گواستنەوەی تەواوی ڕێڕەوەکە (لە ناوەڕاستی ڕێڕەوەکە)
+      final int currentIndex = i;
+      
+      // دوگمەی یەکەم - لە ناوەڕاستی تەواوی ڕێڕەوەکە
       final pathCenter = Offset(
         (pivotPoint.dx + endPoint.dx) / 2,
         (pivotPoint.dy + endPoint.dy) / 2,
@@ -844,31 +892,21 @@ class _BrowserHomeState extends State<BrowserHome> {
         Positioned(
           left: pathCenter.dx - 35,
           top: pathCenter.dy - 35,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onPanUpdate: (details) {
-              setState(() {
-                _aimAssists[i].pivotPoint += details.delta;
-              });
-            },
-            child: Container(
-              width: 70,
-              height: 70,
-              decoration: BoxDecoration(
-                color: aim.activeColor.withOpacity(0.1),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: aim.activeColor.withOpacity(0.1),
-                  width: 1,
-                ),
-              ),
-              child: Icon(
-                Icons.open_with,
-                color: aim.activeColor.withOpacity(0.1),
-                size: 20,
-              ),
-            ),
-          ),
+          child: _buildDragHandle(currentIndex, 70),
+        ),
+      );
+      
+      // دوگمەی دووەم - لە نێوان middle و pivot
+      final betweenPivotMiddle = Offset(
+        (pivotPoint.dx + middlePoint.dx) / 2,
+        (pivotPoint.dy + middlePoint.dy) / 2,
+      );
+      
+      widgets.add(
+        Positioned(
+          left: betweenPivotMiddle.dx - 25,
+          top: betweenPivotMiddle.dy - 25,
+          child: _buildDragHandle(currentIndex, 50),
         ),
       );
       
@@ -997,13 +1035,89 @@ class _BrowserHomeState extends State<BrowserHome> {
               ),
               
               if (currentAim.isVisible) ...[
-                _slider(
-                  "قەبارەی گشتی",
-                  currentAim.circleSize / 100,
-                  (v) => setState(() => _aimAssists[_selectedAimIndex].circleSize = v * 100),
-                  0.05,
-                  1.0,
+                // قەبارەی گشتی بە - و +
+                const Text("قەبارەی گشتی:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+                const SizedBox(height: 5),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // دوگمەی کەمکردن
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          if (_aimAssists[_selectedAimIndex].circleSize > 5) {
+                            _aimAssists[_selectedAimIndex].circleSize -= 2;
+                          }
+                        });
+                      },
+                      onLongPressStart: (_) {
+                        _startContinuousChange(-2, 'circleSize');
+                      },
+                      onLongPressEnd: (_) {
+                        _stopContinuousChange();
+                      },
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[800],
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: currentAim.activeColor, width: 1),
+                        ),
+                        child: const Icon(Icons.remove, color: Colors.white, size: 24),
+                      ),
+                    ),
+                    
+                    // ژمارە لە ناوەڕاست
+                    Container(
+                      width: 60,
+                      margin: const EdgeInsets.symmetric(horizontal: 15),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[900],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${currentAim.circleSize.toInt()}',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: currentAim.activeColor,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    
+                    // دوگمەی زیادکردن
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          if (_aimAssists[_selectedAimIndex].circleSize < 100) {
+                            _aimAssists[_selectedAimIndex].circleSize += 2;
+                          }
+                        });
+                      },
+                      onLongPressStart: (_) {
+                        _startContinuousChange(2, 'circleSize');
+                      },
+                      onLongPressEnd: (_) {
+                        _stopContinuousChange();
+                      },
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[800],
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: currentAim.activeColor, width: 1),
+                        ),
+                        child: const Icon(Icons.add, color: Colors.white, size: 24),
+                      ),
+                    ),
+                  ],
                 ),
+                
+                const SizedBox(height: 10),
                 _slider(
                   "ڕوونی ڕێڕەو",
                   currentAim.pathOpacity,
