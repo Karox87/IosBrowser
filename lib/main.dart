@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
@@ -94,7 +96,7 @@ class BrowserHome extends StatefulWidget {
   @override
   State<BrowserHome> createState() => _BrowserHomeState();
 }
-
+ Completer<void>? _continuousChangeCompleter;
 class _BrowserHomeState extends State<BrowserHome> {
   InAppWebViewController? webViewController;
   final TextEditingController _urlController = TextEditingController();
@@ -104,7 +106,7 @@ class _BrowserHomeState extends State<BrowserHome> {
   String _currentViewMode = 'Desktop';
   bool canGoBack = false;
   bool canGoForward = false;
-  
+  Offset? _dragAnchorOffset;
   List<String> _bookmarks = [];
   List<String> _history = [];
 
@@ -785,7 +787,7 @@ class _BrowserHomeState extends State<BrowserHome> {
           ),
 
           // AIM ASSIST LAYERS - هەردوو Aim Assist
-          ..._buildAimAssistLayers(),
+          if (!_isMenuOpen) ..._buildAimAssistLayers(),
 
           // SETTINGS BUTTON
           Positioned(
@@ -805,30 +807,77 @@ class _BrowserHomeState extends State<BrowserHome> {
   }
 
   // فەنکشن بۆ دەستپێکردنی گۆڕینی بەردەوام
-  void _startContinuousChange(double delta, String property) {
-    _isContinuousChanging = true;
-    _continuousChange(delta, property);
-  }
+void _startContinuousChange(double delta, String property) {
+  _isContinuousChanging = true;
+  _continuousChangeCompleter?.complete(); // پێشووتر بەسەر بێنە
+  _continuousChangeCompleter = Completer<void>();
+  _continuousChange(delta, property, _continuousChangeCompleter!);
+}
   
-  void _continuousChange(double delta, String property) async {
-    while (_isContinuousChanging) {
-      await Future.delayed(const Duration(milliseconds: 80));
-      if (!_isContinuousChanging) break;
-      
-      setState(() {
-        if (property == 'circleSize') {
-          double newVal = _aimAssists[_selectedAimIndex].circleSize + delta;
-          if (newVal >= 5 && newVal <= 100) {
-            _aimAssists[_selectedAimIndex].circleSize = newVal;
-          }
+void _continuousChange(double delta, String property, Completer<void> completer) async {
+  while (_isContinuousChanging) {
+    // یەکەم جار بێ چاوەڕێی:
+    setState(() {
+      if (property == 'circleSize') {
+        double newVal = _aimAssists[_selectedAimIndex].circleSize + delta;
+        if (newVal >= 5 && newVal <= 100) {
+          _aimAssists[_selectedAimIndex].circleSize = newVal;
         }
-      });
-    }
+      }
+    });
+    
+    // دوایی چاوەڕێ بکە بەڵام بپشکنە:
+    await Future.delayed(const Duration(milliseconds: 80));
+    if (!_isContinuousChanging) break;
+  }
+}
+
+  
+void _stopContinuousChange() {
+  _isContinuousChanging = false;
+  _continuousChangeCompleter?.complete();
+  _continuousChangeCompleter = null;
+}
+
+  // ویدجێتی پڕۆفیشناڵ بۆ گواستنەوە - بێ هیچ جوڵەیەکی زیادە
+Widget _buildDragHandle(int aimIndex, double size) {
+  // ئەگەر مێنیوی ڕێکخستنەکان کراوەیە، ڕێگە مەدە بە گواستنەوە
+  if (_isMenuOpen) {
+    return Container(
+      color: Colors.transparent,
+      width: size,
+      height: size,
+    );
   }
   
-  void _stopContinuousChange() {
-    _isContinuousChanging = false;
-  }
+  return GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    dragStartBehavior: DragStartBehavior.down,
+    
+    onPanStart: (details) {
+      final currentPivot = _aimAssists[aimIndex].pivotPoint;
+      _dragAnchorOffset = currentPivot - details.globalPosition;
+    },
+    
+    onPanUpdate: (details) {
+      if (_dragAnchorOffset != null) {
+        setState(() {
+          _aimAssists[aimIndex].pivotPoint = details.globalPosition + _dragAnchorOffset!;
+        });
+      }
+    },
+    
+    onPanEnd: (_) {
+      _dragAnchorOffset = null;
+    },
+    
+    child: Container(
+      color: Colors.transparent,
+      width: size,
+      height: size,
+    ),
+  );
+}
 
   // دروستکردنی هەردوو Aim Assist
   List<Widget> _buildAimAssistLayers() {
@@ -866,22 +915,31 @@ class _BrowserHomeState extends State<BrowserHome> {
       
       final int currentIndex = i;
       
-      // ناوچەی گواستنەوە - تەواوی ڕێڕەوەکە جگە لە end
-      // بەکارهێنانی CustomPainter بۆ hit testing دەقیق
+      // دوگمەی یەکەم - لە ناوەڕاستی تەواوی ڕێڕەوەکە
+      final pathCenter = Offset(
+        (pivotPoint.dx + endPoint.dx) / 2,
+        (pivotPoint.dy + endPoint.dy) / 2,
+      );
+      
       widgets.add(
-        Positioned.fill(
-          child: _AimDragArea(
-            pivotPoint: pivotPoint,
-            middlePoint: middlePoint,
-            endPoint: endPoint,
-            pathWidth: aim.circleSize * 1.9,
-            circleSize: aim.circleSize,
-            onDrag: (delta) {
-              setState(() {
-                _aimAssists[currentIndex].pivotPoint += delta;
-              });
-            },
-          ),
+        Positioned(
+          left: pathCenter.dx - 35,
+          top: pathCenter.dy - 35,
+          child: _buildDragHandle(currentIndex, 70),
+        ),
+      );
+      
+      // دوگمەی دووەم - لە نێوان middle و pivot
+      final betweenPivotMiddle = Offset(
+        (pivotPoint.dx + middlePoint.dx) / 2,
+        (pivotPoint.dy + middlePoint.dy) / 2,
+      );
+      
+      widgets.add(
+        Positioned(
+          left: betweenPivotMiddle.dx - 25,
+          top: betweenPivotMiddle.dy - 25,
+          child: _buildDragHandle(currentIndex, 50),
         ),
       );
       
@@ -932,292 +990,219 @@ class _BrowserHomeState extends State<BrowserHome> {
     return widgets;
   }
 
-  Widget _buildSettings() {
-    final currentAim = _aimAssists[_selectedAimIndex];
-    
-    return Center(
-      child: Container(
-        width: 320,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.black87,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: currentAim.activeColor, width: 2),
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                "ڕێکخستنەکان",
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+Widget _buildSettings() {
+  final currentAim = _aimAssists[_selectedAimIndex];
+  
+  return Center(
+    child: Container(
+      width: 320,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: currentAim.activeColor, width: 2),
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              "ڕێکخستنەکان",
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            const Divider(color: Colors.white24),
+            
+            // هەڵبژاردنی Aim Assist
+            const Text("هەڵبژاردنی Aim Assist:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (int i = 0; i < _aimAssists.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: GestureDetector(
+                      onTap: () => setState(() => _selectedAimIndex = i),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: _selectedAimIndex == i 
+                              ? _aimAssists[i].activeColor 
+                              : Colors.grey[800],
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: _aimAssists[i].activeColor,
+                            width: 2,
+                          ),
+                        ),
+                        child: Text(
+                          'Aim ${i + 1}',
+                          style: TextStyle(
+                            color: _selectedAimIndex == i ? Colors.black : Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            
+            const SizedBox(height: 10),
+            
+            SwitchListTile(
+              title: Text(
+                "پیشاندانی Aim ${_selectedAimIndex + 1}",
+                style: const TextStyle(fontSize: 13, color: Colors.white),
               ),
-              const Divider(color: Colors.white24),
+              value: currentAim.isVisible,
+              activeThumbColor: currentAim.activeColor,
+              onChanged: (val) => setState(() => _aimAssists[_selectedAimIndex].isVisible = val),
+            ),
+            
+            SwitchListTile(
+              title: const Text("پیشاندانی Navigation Bar", style: TextStyle(fontSize: 13, color: Colors.white)),
+              value: _showAppBar,
+              activeThumbColor: currentAim.activeColor,
+              onChanged: (val) => setState(() => _showAppBar = val),
+            ),
+            
+            if (currentAim.isVisible) ...[
+              // قەبارەی گشتی بە سڵاید
+              _slider(
+                "قەبارەی گشتی",
+                currentAim.circleSize / 100,
+                (v) => setState(() => _aimAssists[_selectedAimIndex].circleSize = v * 100),
+                0.05,
+                1.0,
+              ),
               
-              // هەڵبژاردنی Aim Assist
-              const Text("هەڵبژاردنی Aim Assist:", style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
+              _slider(
+                "ڕوونی ڕێڕەو",
+                currentAim.pathOpacity,
+                (v) => setState(() => _aimAssists[_selectedAimIndex].pathOpacity = v),
+                0.1,
+                1.0,
+              ),
+              _slider(
+                "تۆخی هێڵ",
+                currentAim.lineThickness / 10,
+                (v) => setState(() => _aimAssists[_selectedAimIndex].lineThickness = v * 10),
+                0.1,
+                1.0,
+              ),
+              
+              const SizedBox(height: 10),
+              const Text("ڕەنگ:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const SizedBox(height: 5),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  for (int i = 0; i < _aimAssists.length; i++)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: GestureDetector(
-                        onTap: () => setState(() => _selectedAimIndex = i),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: _selectedAimIndex == i 
-                                ? _aimAssists[i].activeColor 
-                                : Colors.grey[800],
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: _aimAssists[i].activeColor,
-                              width: 2,
-                            ),
-                          ),
-                          child: Text(
-                            'Aim ${i + 1}',
-                            style: TextStyle(
-                              color: _selectedAimIndex == i ? Colors.black : Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
+                  Colors.white,
+                  Colors.red,
+                  Colors.green,
+                  Colors.cyan,
+                  Colors.yellow,
+                  Colors.purple,
+                  Colors.orange,
+                  Colors.pink,
+                ].map((c) => GestureDetector(
+                  onTap: () => setState(() => _aimAssists[_selectedAimIndex].activeColor = c),
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: 26,
+                    height: 26,
+                    decoration: BoxDecoration(
+                      color: c,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Colors.white,
+                        width: currentAim.activeColor == c ? 2.5 : 0,
                       ),
                     ),
-                ],
-              ),
-              
-              const SizedBox(height: 10),
-              
-              SwitchListTile(
-                title: Text(
-                  "پیشاندانی Aim ${_selectedAimIndex + 1}",
-                  style: const TextStyle(fontSize: 13, color: Colors.white),
-                ),
-                value: currentAim.isVisible,
-                activeThumbColor: currentAim.activeColor,
-                onChanged: (val) => setState(() => _aimAssists[_selectedAimIndex].isVisible = val),
-              ),
-              
-              SwitchListTile(
-                title: const Text("پیشاندانی Navigation Bar", style: TextStyle(fontSize: 13, color: Colors.white)),
-                value: _showAppBar,
-                activeThumbColor: currentAim.activeColor,
-                onChanged: (val) => setState(() => _showAppBar = val),
-              ),
-              
-              if (currentAim.isVisible) ...[
-                // قەبارەی گشتی بە - و +
-                const Text("قەبارەی گشتی:", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                const SizedBox(height: 5),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // دوگمەی کەمکردن
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          if (_aimAssists[_selectedAimIndex].circleSize > 5) {
-                            _aimAssists[_selectedAimIndex].circleSize -= 2;
-                          }
-                        });
-                      },
-                      onLongPressStart: (_) {
-                        _startContinuousChange(-2, 'circleSize');
-                      },
-                      onLongPressEnd: (_) {
-                        _stopContinuousChange();
-                      },
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[800],
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: currentAim.activeColor, width: 1),
-                        ),
-                        child: const Icon(Icons.remove, color: Colors.white, size: 24),
-                      ),
-                    ),
-                    
-                    // ژمارە لە ناوەڕاست
-                    Container(
-                      width: 60,
-                      margin: const EdgeInsets.symmetric(horizontal: 15),
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[900],
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '${currentAim.circleSize.toInt()}',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: currentAim.activeColor,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    
-                    // دوگمەی زیادکردن
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          if (_aimAssists[_selectedAimIndex].circleSize < 100) {
-                            _aimAssists[_selectedAimIndex].circleSize += 2;
-                          }
-                        });
-                      },
-                      onLongPressStart: (_) {
-                        _startContinuousChange(2, 'circleSize');
-                      },
-                      onLongPressEnd: (_) {
-                        _stopContinuousChange();
-                      },
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[800],
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: currentAim.activeColor, width: 1),
-                        ),
-                        child: const Icon(Icons.add, color: Colors.white, size: 24),
-                      ),
-                    ),
-                  ],
-                ),
-                
-                const SizedBox(height: 10),
-                _slider(
-                  "ڕوونی ڕێڕەو",
-                  currentAim.pathOpacity,
-                  (v) => setState(() => _aimAssists[_selectedAimIndex].pathOpacity = v),
-                  0.1,
-                  1.0,
-                ),
-                _slider(
-                  "تۆخی هێڵ",
-                  currentAim.lineThickness / 10,
-                  (v) => setState(() => _aimAssists[_selectedAimIndex].lineThickness = v * 10),
-                  0.1,
-                  1.0,
-                ),
-                
-                const SizedBox(height: 10),
-                const Text("ڕەنگ:", style: TextStyle(color: Colors.white70, fontSize: 12)),
-                const SizedBox(height: 5),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Colors.white,
-                    Colors.red,
-                    Colors.green,
-                    Colors.cyan,
-                    Colors.yellow,
-                    Colors.purple,
-                    Colors.orange,
-                    Colors.pink,
-                  ].map((c) => GestureDetector(
-                    onTap: () => setState(() => _aimAssists[_selectedAimIndex].activeColor = c),
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 3),
-                      width: 26,
-                      height: 26,
-                      decoration: BoxDecoration(
-                        color: c,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white,
-                          width: currentAim.activeColor == c ? 2.5 : 0,
-                        ),
-                      ),
-                    ),
-                  )).toList(),
-                ),
-              ],
-              
-              const SizedBox(height: 15),
-              const Divider(color: Colors.white24),
-              
-              // کۆپیکردنی ڕێکخستنەکان بۆ Aim دیکە
-              if (_aimAssists.length == 2)
-                ElevatedButton.icon(
-                  onPressed: () {
-                    setState(() {
-                      int otherIndex = _selectedAimIndex == 0 ? 1 : 0;
-                      _aimAssists[otherIndex] = _aimAssists[_selectedAimIndex].copyWith(
-                        pivotPoint: _aimAssists[otherIndex].pivotPoint,
-                      );
-                    });
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('ڕێکخستنەکان کۆپی کران')),
-                    );
-                  },
-                  icon: const Icon(Icons.copy, size: 16),
-                  label: const Text('کۆپیکردن بۆ Aim دیکە'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.grey[700],
-                    foregroundColor: Colors.white,
                   ),
-                ),
-              
-              const SizedBox(height: 10),
-              const Text("زووم:", style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 5),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  IconButton(
-                    onPressed: () {
-                      setState(() {
-                        if (_zoomLevel > 0.5) _zoomLevel -= 0.1;
-                        webViewController?.setSettings(
-                          settings: _getWebViewSettings(),
-                        );
-                      });
-                    },
-                    icon: const Icon(Icons.zoom_out, color: Colors.white),
-                    tooltip: 'زووم ئاوت',
-                  ),
-                  Text(
-                    '${(_zoomLevel * 100).toInt()}%',
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
-                  ),
-                  IconButton(
-                    onPressed: () {
-                      setState(() {
-                        if (_zoomLevel < 3.0) _zoomLevel += 0.1;
-                        webViewController?.setSettings(
-                          settings: _getWebViewSettings(),
-                        );
-                      });
-                    },
-                    icon: const Icon(Icons.zoom_in, color: Colors.white),
-                    tooltip: 'زووم ئین',
-                  ),
-                ],
-              ),
-              
-              const SizedBox(height: 15),
-              ElevatedButton(
-                onPressed: () => setState(() => _isMenuOpen = false),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: currentAim.activeColor,
-                  foregroundColor: Colors.black,
-                ),
-                child: const Text("داخستن", style: TextStyle(fontWeight: FontWeight.bold)),
+                )).toList(),
               ),
             ],
-          ),
+            
+            const SizedBox(height: 15),
+            const Divider(color: Colors.white24),
+            
+            // کۆپیکردنی ڕێکخستنەکان بۆ Aim دیکە
+            if (_aimAssists.length == 2)
+              ElevatedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    int otherIndex = _selectedAimIndex == 0 ? 1 : 0;
+                    _aimAssists[otherIndex] = _aimAssists[_selectedAimIndex].copyWith(
+                      pivotPoint: _aimAssists[otherIndex].pivotPoint,
+                    );
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('ڕێکخستنەکان کۆپی کران')),
+                  );
+                },
+                icon: const Icon(Icons.copy, size: 16),
+                label: const Text('کۆپیکردن بۆ Aim دیکە'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.grey[700],
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            
+            const SizedBox(height: 10),
+            const Text("زووم:", style: TextStyle(color: Colors.white70, fontSize: 12)),
+            const SizedBox(height: 5),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      if (_zoomLevel > 0.5) _zoomLevel -= 0.1;
+                      webViewController?.setSettings(
+                        settings: _getWebViewSettings(),
+                      );
+                    });
+                  },
+                  icon: const Icon(Icons.zoom_out, color: Colors.white),
+                  tooltip: 'زووم ئاوت',
+                ),
+                Text(
+                  '${(_zoomLevel * 100).toInt()}%',
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                ),
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      if (_zoomLevel < 3.0) _zoomLevel += 0.1;
+                      webViewController?.setSettings(
+                        settings: _getWebViewSettings(),
+                      );
+                    });
+                  },
+                  icon: const Icon(Icons.zoom_in, color: Colors.white),
+                  tooltip: 'زووم ئین',
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 15),
+            ElevatedButton(
+              onPressed: () => setState(() => _isMenuOpen = false),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: currentAim.activeColor,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text("داخستن", style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _slider(String label, double val, Function(double) onChanged, double min, double max) {
     return Column(
@@ -1333,12 +1318,14 @@ class _BrowserHomeState extends State<BrowserHome> {
     );
   }
 
-  @override
-  void dispose() {
-    _urlController.dispose();
-    _popupControllers.clear();
-    super.dispose();
-  }
+@override
+void dispose() {
+  _continuousChangeCompleter?.complete();
+  _continuousChangeCompleter = null;
+  _urlController.dispose();
+  _popupControllers.clear();
+  super.dispose();
+}
 }
 
 class ProAimPainter extends CustomPainter {
@@ -1461,96 +1448,5 @@ class ProAimPainter extends CustomPainter {
            opacity != oldDelegate.opacity ||
            color != oldDelegate.color ||
            lineThickness != oldDelegate.lineThickness;
-  }
-}
-
-// کلاسی تایبەت بۆ گواستنەوە - دەست لە هەر شوێنێکی ڕێڕەوەکە جگە لە end
-class _AimDragArea extends StatefulWidget {
-  final Offset pivotPoint;
-  final Offset middlePoint;
-  final Offset endPoint;
-  final double pathWidth;
-  final double circleSize;
-  final Function(Offset delta) onDrag;
-
-  const _AimDragArea({
-    required this.pivotPoint,
-    required this.middlePoint,
-    required this.endPoint,
-    required this.pathWidth,
-    required this.circleSize,
-    required this.onDrag,
-  });
-
-  @override
-  State<_AimDragArea> createState() => _AimDragAreaState();
-}
-
-class _AimDragAreaState extends State<_AimDragArea> {
-  bool _isDragging = false;
-  Offset? _lastPosition;
-
-  // چێککردن ئایا خاڵ لەسەر ناوچەی ڕێڕەوەکەیە (جگە لە end)
-  bool _isPointInDragArea(Offset point) {
-    // ئەگەر لەسەر end بوو، نەگەڕێتەوە
-    double distToEnd = (point - widget.endPoint).distance;
-    if (distToEnd <= widget.circleSize + 20) return false;
-
-    // چێککردن بۆ pivot
-    double distToPivot = (point - widget.pivotPoint).distance;
-    if (distToPivot <= widget.circleSize + 15) return true;
-
-    // چێککردن بۆ middle
-    double distToMiddle = (point - widget.middlePoint).distance;
-    if (distToMiddle <= widget.circleSize + 15) return true;
-
-    // چێککردن بۆ ڕێڕەوەکە
-    double angle = math.atan2(
-      widget.endPoint.dy - widget.pivotPoint.dy,
-      widget.endPoint.dx - widget.pivotPoint.dx,
-    );
-    double pathLength = (widget.endPoint - widget.pivotPoint).distance;
-
-    Offset translated = Offset(
-      point.dx - widget.pivotPoint.dx,
-      point.dy - widget.pivotPoint.dy,
-    );
-    Offset rotated = Offset(
-      translated.dx * math.cos(-angle) - translated.dy * math.sin(-angle),
-      translated.dx * math.sin(-angle) + translated.dy * math.cos(-angle),
-    );
-
-    return rotated.dx >= -5 &&
-           rotated.dx <= pathLength - widget.circleSize - 15 &&
-           rotated.dy.abs() <= widget.pathWidth / 2 + 5;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (event) {
-        if (_isPointInDragArea(event.localPosition)) {
-          _isDragging = true;
-          _lastPosition = event.localPosition;
-        }
-      },
-      onPointerMove: (event) {
-        if (_isDragging && _lastPosition != null) {
-          final delta = event.localPosition - _lastPosition!;
-          widget.onDrag(delta);
-          _lastPosition = event.localPosition;
-        }
-      },
-      onPointerUp: (event) {
-        _isDragging = false;
-        _lastPosition = null;
-      },
-      onPointerCancel: (event) {
-        _isDragging = false;
-        _lastPosition = null;
-      },
-      child: const SizedBox.expand(),
-    );
   }
 }
