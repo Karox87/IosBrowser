@@ -88,6 +88,35 @@ class AimAssistData {
   }
   
   Offset get endPoint => middlePoint + Offset.fromDirection(currentAngle, lineLength);
+
+  // گۆڕین بۆ JSON (بۆ خەزنکردن)
+  Map<String, dynamic> toJson() {
+    return {
+      'pivotX': pivotPoint.dx,
+      'pivotY': pivotPoint.dy,
+      'lineLength': lineLength,
+      'currentAngle': currentAngle,
+      'circleSize': circleSize,
+      'pathOpacity': pathOpacity,
+      'lineThickness': lineThickness,
+      'activeColor': activeColor.value, // هەڵگرتنی ڕەنگ وەک ژمارەی تەواو
+      'isVisible': isVisible,
+    };
+  }
+
+  // دروستکردن لە JSON
+  factory AimAssistData.fromJson(Map<String, dynamic> json) {
+    return AimAssistData(
+      pivotPoint: Offset(json['pivotX'] ?? 150.0, json['pivotY'] ?? 500.0),
+      lineLength: json['lineLength'] ?? 100.0,
+      currentAngle: json['currentAngle'] ?? -0.8,
+      circleSize: json['circleSize'] ?? 20.0,
+      pathOpacity: json['pathOpacity'] ?? 0.5,
+      lineThickness: json['lineThickness'] ?? 2.0,
+      activeColor: Color(json['activeColor'] ?? Colors.white.value),
+      isVisible: json['isVisible'] ?? true,
+    );
+  }
 }
 
 class BrowserHome extends StatefulWidget {
@@ -170,7 +199,101 @@ class _BrowserHomeState extends State<BrowserHome> {
     setState(() {
       _bookmarks = prefs.getStringList('bookmarks') ?? [];
       _history = prefs.getStringList('history') ?? [];
+      _showAppBar = prefs.getBool('showAppBar') ?? true;
+      _zoomLevel = prefs.getDouble('zoomLevel') ?? 1.0;
     });
+    
+    // بارکردنی ئایم ئەسستەکان لە خەزنی ناوەخۆیی
+    await _loadAimAssists();
+  }
+
+  Future<void> _saveAimAssists() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // گۆڕینی هەموو ئایم ئەسستەکان بۆ JSON
+    List<Map<String, dynamic>> aimAssistsJson = [];
+    for (var aim in _aimAssists) {
+      aimAssistsJson.add(aim.toJson());
+    }
+    
+    // گۆڕین بۆ JSON تەڕ و خەزنکردن
+    String jsonString = _aimAssistsToJson(aimAssistsJson);
+    await prefs.setString('aimAssists', jsonString);
+    
+    // هەروەها ڕێکخستنەکانی دیکەش هەڵگیرسێنەوە
+    await prefs.setBool('showAppBar', _showAppBar);
+    await prefs.setDouble('zoomLevel', _zoomLevel);
+  }
+
+  Future<void> _loadAimAssists() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? jsonString = prefs.getString('aimAssists');
+    
+    if (jsonString != null && jsonString.isNotEmpty) {
+      try {
+        List<Map<String, dynamic>> aimAssistsJson = _jsonToAimAssists(jsonString);
+        
+        if (aimAssistsJson.isNotEmpty) {
+          setState(() {
+            for (int i = 0; i < math.min(aimAssistsJson.length, _aimAssists.length); i++) {
+              _aimAssists[i] = AimAssistData.fromJson(aimAssistsJson[i]);
+            }
+          });
+        }
+      } catch (e) {
+        debugPrint('Error loading aim assists: $e');
+      }
+    }
+  }
+
+  // Helper methods for JSON conversion
+  String _aimAssistsToJson(List<Map<String, dynamic>> aimAssists) {
+    return aimAssists.map((aim) => aim.toString()).join('||');
+  }
+
+  List<Map<String, dynamic>> _jsonToAimAssists(String jsonString) {
+    List<Map<String, dynamic>> result = [];
+    
+    try {
+      List<String> parts = jsonString.split('||');
+      
+      for (String part in parts) {
+        if (part.trim().isEmpty) continue;
+        
+        // گۆڕینی لە تەڕەوە بۆ map
+        part = part.replaceAll('{', '').replaceAll('}', '');
+        Map<String, dynamic> map = {};
+        
+        List<String> pairs = part.split(', ');
+        for (String pair in pairs) {
+          List<String> keyValue = pair.split(': ');
+          if (keyValue.length == 2) {
+            String key = keyValue[0].trim();
+            String value = keyValue[1].trim();
+            
+            // گۆڕینی بۆ جۆری دروست
+            if (key == 'pivotX' || key == 'pivotY' || 
+                key == 'lineLength' || key == 'currentAngle' ||
+                key == 'circleSize' || key == 'pathOpacity' ||
+                key == 'lineThickness') {
+              map[key] = double.tryParse(value) ?? 0.0;
+            } else if (key == 'activeColor') {
+              map[key] = int.tryParse(value) ?? Colors.white.value;
+            } else if (key == 'isVisible') {
+              map[key] = value == 'true';
+            }
+          }
+        }
+        
+        if (map.isNotEmpty) {
+          result.add(map);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error parsing aim assists JSON: $e');
+    }
+    
+    return result;
   }
 
   Future<void> _saveBookmarks() async {
@@ -826,6 +949,9 @@ void _continuousChange(double delta, String property, Completer<void> completer)
       }
     });
     
+    // هەر کاتێک گۆڕانکاری کراو خەزنی بکە
+    await _saveAimAssists();
+    
     // دوایی چاوەڕێ بکە بەڵام بپشکنە:
     await Future.delayed(const Duration(milliseconds: 80));
     if (!_isContinuousChanging) break;
@@ -864,6 +990,8 @@ Widget _buildDragHandle(int aimIndex, double size) {
         setState(() {
           _aimAssists[aimIndex].pivotPoint = details.globalPosition + _dragAnchorOffset!;
         });
+        // هەر گۆڕانکارییەک خەزنی بکە
+        _saveAimAssists();
       }
     },
     
@@ -965,6 +1093,8 @@ Widget _buildDragHandle(int aimIndex, double size) {
                   _aimAssists[i].lineLength = gap + 20;
                 }
               });
+              // هەر گۆڕانکارییەک خەزنی بکە
+              _saveAimAssists();
             },
             child: Container(
               width: 60,
@@ -1057,14 +1187,20 @@ Widget _buildSettings() {
               ),
               value: currentAim.isVisible,
               activeThumbColor: currentAim.activeColor,
-              onChanged: (val) => setState(() => _aimAssists[_selectedAimIndex].isVisible = val),
+              onChanged: (val) {
+                setState(() => _aimAssists[_selectedAimIndex].isVisible = val);
+                _saveAimAssists(); // خەزنی بکە
+              },
             ),
             
             SwitchListTile(
               title: const Text("پیشاندانی Navigation Bar", style: TextStyle(fontSize: 13, color: Colors.white)),
               value: _showAppBar,
               activeThumbColor: currentAim.activeColor,
-              onChanged: (val) => setState(() => _showAppBar = val),
+              onChanged: (val) {
+                setState(() => _showAppBar = val);
+                _saveAimAssists(); // خەزنی بکە
+              },
             ),
             
             if (currentAim.isVisible) ...[
@@ -1072,7 +1208,10 @@ Widget _buildSettings() {
               _slider(
                 "قەبارەی گشتی",
                 currentAim.circleSize / 100,
-                (v) => setState(() => _aimAssists[_selectedAimIndex].circleSize = v * 100),
+                (v) {
+                  setState(() => _aimAssists[_selectedAimIndex].circleSize = v * 100);
+                  _saveAimAssists(); // خەزنی بکە
+                },
                 0.05,
                 1.0,
               ),
@@ -1081,14 +1220,20 @@ Widget _buildSettings() {
               _slider(
                 "ڕوونی ڕێڕەو",
                 currentAim.pathOpacity,
-                (v) => setState(() => _aimAssists[_selectedAimIndex].pathOpacity = v),
+                (v) {
+                  setState(() => _aimAssists[_selectedAimIndex].pathOpacity = v);
+                  _saveAimAssists(); // خەزنی بکە
+                },
                 0.1,
                 1.0,
               ),
               _slider(
                 "تۆخی هێڵ",
                 currentAim.lineThickness / 10,
-                (v) => setState(() => _aimAssists[_selectedAimIndex].lineThickness = v * 10),
+                (v) {
+                  setState(() => _aimAssists[_selectedAimIndex].lineThickness = v * 10);
+                  _saveAimAssists(); // خەزنی بکە
+                },
                 0.1,
                 1.0,
               ),
@@ -1108,7 +1253,10 @@ Widget _buildSettings() {
                   Colors.orange,
                   Colors.pink,
                 ].map((c) => GestureDetector(
-                  onTap: () => setState(() => _aimAssists[_selectedAimIndex].activeColor = c),
+                  onTap: () {
+                    setState(() => _aimAssists[_selectedAimIndex].activeColor = c);
+                    _saveAimAssists(); // خەزنی بکە
+                  },
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 3),
                     width: 26,
@@ -1139,6 +1287,7 @@ Widget _buildSettings() {
                       pivotPoint: _aimAssists[otherIndex].pivotPoint,
                     );
                   });
+                  _saveAimAssists(); // خەزنی بکە
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('ڕێکخستنەکان کۆپی کران')),
                   );
@@ -1165,6 +1314,7 @@ Widget _buildSettings() {
                         settings: _getWebViewSettings(),
                       );
                     });
+                    _saveAimAssists(); // خەزنی بکە
                   },
                   icon: const Icon(Icons.zoom_out, color: Colors.white),
                   tooltip: 'زووم ئاوت',
@@ -1181,6 +1331,7 @@ Widget _buildSettings() {
                         settings: _getWebViewSettings(),
                       );
                     });
+                    _saveAimAssists(); // خەزنی بکە
                   },
                   icon: const Icon(Icons.zoom_in, color: Colors.white),
                   tooltip: 'زووم ئین',
@@ -1320,6 +1471,9 @@ Widget _buildSettings() {
 
 @override
 void dispose() {
+  // هەر کاتێک ئەپەکە داخرا، هەموو ڕێکخستنەکان خەزنی بکە
+  _saveAimAssists();
+  
   _continuousChangeCompleter?.complete();
   _continuousChangeCompleter = null;
   _urlController.dispose();
