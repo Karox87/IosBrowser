@@ -787,7 +787,7 @@ class _BrowserHomeState extends State<BrowserHome> {
           ),
 
           // AIM ASSIST LAYERS - هەردوو Aim Assist
-          if (!_isMenuOpen) ..._buildAimAssistLayers(),
+           ..._buildAimAssistLayers(),
 
           // SETTINGS BUTTON
           Positioned(
